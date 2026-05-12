@@ -386,9 +386,9 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
             ThrowLastError();
 #endif // __APPLE__ && HOST_ARM64
     }
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     PAL_LOADMarkSectionAsNotNeeded((void*)dir);
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
     if (pFlushRegion != NULL)
     {
@@ -543,7 +543,7 @@ LoadedImageLayout::LoadedImageLayout(PEImage* pOwner, HRESULT* loadFailure)
     m_pOwner = pOwner;
     _ASSERTE(!pOwner->IsCompressed());
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     _ASSERTE(!pOwner->IsInBundle());
     m_Module = CLRLoadLibraryEx(pOwner->GetPath(), NULL, GetLoadWithAlteredSearchPathFlag());
     if (m_Module == NULL)
@@ -604,13 +604,13 @@ LoadedImageLayout::LoadedImageLayout(PEImage* pOwner, HRESULT* loadFailure)
 #endif
 }
 
-#if !defined(TARGET_UNIX)
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 LoadedImageLayout::LoadedImageLayout(PEImage* pOwner, HMODULE hModule)
 {
     m_pOwner = pOwner;
     PEDecoder::Init((void*)hModule, /* relocated */ true);
 }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 LoadedImageLayout::~LoadedImageLayout()
 {
@@ -622,10 +622,10 @@ LoadedImageLayout::~LoadedImageLayout()
     }
     CONTRACTL_END;
 
-#if !defined(TARGET_UNIX)
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     if (m_Module)
         CLRFreeLibrary(m_Module);
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 }
 
 FlatImageLayout::FlatImageLayout(PEImage* pOwner)
@@ -1229,7 +1229,7 @@ UNSUPPORTED:
 NativeImageLayout::NativeImageLayout(LPCWSTR fullPath)
 {
     PVOID loadedImage;
-#if TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     {
         HANDLE fileHandle = WszCreateFile(
             fullPath,

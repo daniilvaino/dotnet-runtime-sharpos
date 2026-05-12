@@ -473,7 +473,12 @@ if(CLR_CMAKE_TARGET_UNIX)
     endif()
 endif(CLR_CMAKE_TARGET_UNIX)
 
-if(CLR_CMAKE_TARGET_OS STREQUAL windows)
+if(CLR_CMAKE_TARGET_OS STREQUAL windows AND NOT CLR_CMAKE_TARGET_SHARPOS)
+    # SharpOS port: CLR_CMAKE_TARGET_OS auto-set к "windows" by build-runtime.cmd
+    # because we're on Windows host. But TARGET_SHARPOS is its own target
+    # (per Phase 2 Redesign + D10) — Windows-target cmake gates would
+    # cascade incorrectly (OUT_OF_PROCESS_SETTHREADCONTEXT, auto Win32 lib
+    # link, bypass of pal/). So skip CLR_CMAKE_TARGET_WIN32=1 when SHARPOS.
     set(CLR_CMAKE_TARGET_WIN32 1)
 endif()
 

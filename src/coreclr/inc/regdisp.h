@@ -46,7 +46,11 @@ struct REGDISPLAY_BASE {
     TADDR SP;
     TADDR ControlPC; // LOONGARCH: use RA for PC
 
-#if defined(TARGET_AMD64) && defined(TARGET_WINDOWS)
+/* SharpOS port: SSP field also нужен для TARGET_SHARPOS — EECodeManager/InterpreterCodeManager
+ * UpdateSSP методы и GetSSPForFrameOnCurrentStack используют это поле. Field остаётся
+ * unused в runtime (CET shadow stack не реализован), но struct/method signatures
+ * matched. */
+#if defined(TARGET_AMD64) && (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS))
     TADDR SSP;
 #endif
 };

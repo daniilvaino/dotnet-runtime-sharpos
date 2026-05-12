@@ -51,21 +51,30 @@ extern "C" {
 
 #else   // !defined(__i386__)
 
+// SharpOS port: MSVC уже имеет __cdecl/__stdcall как keywords и использует
+// их в собственной stdlib (<exception>, <new>). Redefining their to empty
+// breaks MSVC's stdlib parsing (terminate, set_terminate declarations fail
+// with C2873/C4430). На non-MSVC compilers (gcc/clang Unix-host) этот block
+// необходим — там нет __cdecl. Guard на _MSC_VER skips harmful redefine.
+#if !defined(_MSC_VER)
 #define __stdcall
 #define _stdcall
 #define __cdecl
 #define _cdecl
 #define CDECL
+#endif
 
 // Some platforms (such as FreeBSD) define the __fastcall macro
 // on all targets, even when using it will fail.
 // Undefine it here so we can use it on all platforms without error.
+#if !defined(_MSC_VER)
 #ifdef __fastcall
 #undef __fastcall
 #endif
 
 #define __fastcall
 #define _fastcall
+#endif
 
 #endif  // !defined(__i386__)
 

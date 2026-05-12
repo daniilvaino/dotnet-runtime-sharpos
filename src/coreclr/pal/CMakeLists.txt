@@ -13,5 +13,12 @@ else()
     add_link_options(-fwasm-exceptions -sEXIT_RUNTIME=1)
 endif()
 
-add_subdirectory(src)
-add_subdirectory(tests)
+# SharpOS PAL: pal/sharpos/ replaces pal/src/ on TARGET_SHARPOS.
+# Per Phase 2 Redesign + D9 — pal/sharpos/ is a parallel directory, additive
+# only, no modifications to pal/src/. Tests are skipped on TARGET_SHARPOS too.
+if (CLR_CMAKE_TARGET_SHARPOS)
+    add_subdirectory(sharpos)
+else()
+    add_subdirectory(src)
+    add_subdirectory(tests)
+endif()

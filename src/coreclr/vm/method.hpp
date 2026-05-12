@@ -3231,7 +3231,9 @@ public:
     //
     LPVOID FindEntryPoint(NATIVE_LIBRARY_HANDLE hMod);
 
-#ifdef TARGET_WINDOWS
+// SharpOS port: match cpp definitions extended to TARGET_SHARPOS (we take
+// Windows-shaped FindEntryPoint path; see method.cpp:3411).
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 private:
     FARPROC FindEntryPointWithMangling(NATIVE_LIBRARY_HANDLE mod, PTR_CUTF8 entryPointName);
     FARPROC FindEntryPointWithSuffix(NATIVE_LIBRARY_HANDLE mod, PTR_CUTF8 entryPointName, char suffix);

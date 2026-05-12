@@ -37,7 +37,9 @@ elseif (FEATURE_PERFTRACING_PAL_TCP)
     target_sources(dn-diagnosticserver-pal INTERFACE
         ds-ipc-pal-socket.c
     )
-elseif(HOST_WIN32 OR CLR_CMAKE_TARGET_WIN32)
+elseif(HOST_WIN32 OR CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_HOST_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
+    # SharpOS port: HOST_WINDOWS → named-pipe IPC. Vanilla check `HOST_WIN32`
+    # cmake variable не существует (правильное имя — CLR_CMAKE_HOST_WIN32).
     target_sources(dn-diagnosticserver-pal INTERFACE
         ds-ipc-pal-namedpipe.c
     )

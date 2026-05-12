@@ -278,7 +278,10 @@ HRESULT STDMETHODCALLTYPE
 ShimLocalDataTarget::GetPlatform(
         CorDebugPlatform *pPlatform)
 {
-#ifdef TARGET_UNIX
+    // SharpOS port: ShimLocalDataTarget — debugger-side IPC component, не нужен
+    // в kernel image. Skip TARGET_UNIX #error guard на TARGET_SHARPOS;
+    // platform reporting unused в bare-metal context, но stub завершает linkage.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 #error ShimLocalDataTarget is not implemented on PAL systems yet
 #endif
     // Assume that we're running on Windows for now.

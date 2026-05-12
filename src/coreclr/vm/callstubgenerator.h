@@ -63,7 +63,8 @@ class CallStubGenerator
         ReturnTypeVoid,
         ReturnTypeI8,
         ReturnTypeDouble,
-#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+// SharpOS port: match callstubgenerator.cpp's extended Windows AMD64 path.
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && defined(TARGET_AMD64)
         ReturnTypeBuffArg1,
         ReturnTypeBuffArg2,
 #else

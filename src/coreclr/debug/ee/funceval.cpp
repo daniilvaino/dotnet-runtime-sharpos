@@ -3990,7 +3990,8 @@ void * STDCALL FuncEvalHijackWorker(DebuggerEval *pDE)
 }
 
 
-#if defined(FEATURE_EH_FUNCLETS) && !defined(TARGET_UNIX) && !defined(TARGET_X86)
+/* SharpOS port: ungate — FuncEvalHijack MASM stub references personality routine. */
+#if defined(FEATURE_EH_FUNCLETS) && (!defined(TARGET_UNIX) || defined(TARGET_SHARPOS)) && !defined(TARGET_X86)
 
 EXTERN_C EXCEPTION_DISPOSITION
 FuncEvalHijackPersonalityRoutine(IN     PEXCEPTION_RECORD   pExceptionRecord,

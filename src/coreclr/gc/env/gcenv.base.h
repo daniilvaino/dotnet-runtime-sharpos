@@ -45,7 +45,10 @@
 #define SSIZE_T_MAX ((ptrdiff_t)(SIZE_T_MAX / 2))
 #endif
 
-#ifdef TARGET_UNIX
+// SharpOS port: TARGET_SHARPOS implies TARGET_UNIX preprocessor, но мы используем
+// HOST_WINDOWS windows.h types напрямую (DWORD = unsigned long etc.). Skip these
+// aliases чтобы не конфликтовать с windows.h.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 // -----------------------------------------------------------------------------------------------------------
 //
 // Aliases for Win32 types
@@ -62,7 +65,7 @@ typedef uint32_t ULONG;
 // -----------------------------------------------------------------------------------------------------------
 // HRESULT subset.
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 typedef int32_t HRESULT;
 #else
 // this must exactly match the typedef used by windows.h

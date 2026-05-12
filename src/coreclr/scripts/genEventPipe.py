@@ -450,12 +450,12 @@ def getCoreCLREventPipeHelperFileImplPrefix():
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 #include <windef.h>
 #include <crtdbg.h>
 #else
 #include "pal.h"
-#endif //TARGET_UNIX
+#endif //TARGET_UNIX || TARGET_SHARPOS
 
 bool ResizeBuffer(BYTE *&buffer, size_t& size, size_t currLen, size_t newSize, bool &fixedBuffer)
 {

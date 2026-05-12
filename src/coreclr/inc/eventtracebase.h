@@ -83,7 +83,7 @@ enum EtwGCSettingFlags
 #define EVENT_PIPE_ENABLED() (FALSE)
 #endif
 
-#if  !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 
 //
 // Use this macro at the least before calling the Event Macros
@@ -181,7 +181,10 @@ public:
 #ifdef FEATURE_EVENT_TRACE
 
 class Object;
-#if !defined(HOST_UNIX)
+// SharpOS port: на TARGET_SHARPOS используем Unix-shape eventing path (LTTng-like
+// + XplatEventLogger), не Windows ETW. Otherwise evntprov.h и наш clrproviders.h
+// оба define _EVENT_DESCRIPTOR / MCGEN_TRACE_CONTEXT / etc. — conflict.
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 
 /***************************************/
 /* Tracing levels supported by CLR ETW */
@@ -233,7 +236,7 @@ struct ProfilingScanContext;
 #define EVENT_CONTROL_CODE_ENABLE_PROVIDER 1
 #define EVENT_CONTROL_CODE_CAPTURE_STATE 2
 
-#endif //!defined(HOST_UNIX)
+#endif //!defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 
 
 #else // FEATURE_EVENT_TRACE
@@ -250,7 +253,9 @@ struct ProfilingScanContext;
 extern UINT32 g_nClrInstanceId;
 
 #define GetClrInstanceId()  (static_cast<UINT16>(g_nClrInstanceId))
-#if defined(HOST_UNIX) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
+// SharpOS port: clrproviders.h (generated) defines LTTNG_TRACE_CONTEXT used
+// by XplatEventLogger class — also needed on TARGET_SHARPOS, не только HOST_UNIX.
+#if (defined(HOST_UNIX) || defined(TARGET_SHARPOS)) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
 #define KEYWORDZERO 0x0
 
 #define DEF_LTTNG_KEYWORD_ENABLED 1
@@ -259,7 +264,7 @@ extern UINT32 g_nClrInstanceId;
 #endif // FEATURE_EVENT_TRACE
 #include "clrconfig.h"
 
-#endif // defined(HOST_UNIX) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
+#endif // (defined(HOST_UNIX) || defined(TARGET_SHARPOS)) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
 
 #if defined(FEATURE_PERFTRACING) || defined(FEATURE_EVENTSOURCE_XPLAT)
 
@@ -418,7 +423,11 @@ private:
 };
 #endif // defined(FEATURE_PERFTRACING) || defined(FEATURE_EVENTSOURCE_XPLAT)
 
-#if defined(HOST_UNIX) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
+// SharpOS port: XplatEventLogger class normally guarded на HOST_UNIX, но
+// наш generated clretwallmain.h (--targetos linux) references it regardless.
+// Extend conditional к TARGET_SHARPOS чтобы class declared on Windows host
+// build с TARGET_SHARPOS preprocessor active.
+#if (defined(HOST_UNIX) || defined(TARGET_SHARPOS)) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
 
 class XplatEventLoggerController
 {
@@ -559,7 +568,7 @@ public:
 };
 
 
-#endif  // defined(HOST_UNIX) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
+#endif  // (defined(HOST_UNIX) || defined(TARGET_SHARPOS)) && (defined(FEATURE_EVENT_TRACE) || defined(FEATURE_EVENTSOURCE_XPLAT))
 
 #if defined(FEATURE_EVENT_TRACE)
 
@@ -603,7 +612,10 @@ VOID EventPipeEtwCallbackDotNETRuntimePrivate(
     _In_opt_ EventFilterDescriptor* FilterData,
     _Inout_opt_ PVOID CallbackContext);
 
-#ifndef  HOST_UNIX
+// SharpOS port: skip Windows ETW EtwCallback/EtwCallout — они используют
+// PEVENT_FILTER_DESCRIPTOR/REGHANDLE/PEVENT_DATA_DESCRIPTOR из Windows-ETW evntprov.h,
+// которые мы не включаем (clrproviders.h Linux-shape вместо).
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 // Callback and stack support
 #if !defined(DONOT_DEFINE_ETW_CALLBACK) && !defined(DACCESS_COMPILE)
 extern "C" {
@@ -653,7 +665,7 @@ extern "C" {
         EtwCallout(RegHandle, Descriptor, NumberOfArguments, EventData)
 #endif //!DONOT_DEFINE_ETW_CALLBACK && !DACCESS_COMPILE
 
-#endif //!HOST_UNIX
+#endif //!HOST_UNIX && !TARGET_SHARPOS
 #include "clretwallmain.h"
 
 #if defined(FEATURE_PERFTRACING)
@@ -721,7 +733,9 @@ typedef SetSHash<MethodDesc*, PtrSetSHashTraits<MethodDesc*>> MethodDescSet;
 namespace ETW
 {
     // Class to wrap the ETW infrastructure logic
-#if  !defined(HOST_UNIX)
+    // SharpOS port: CEtwTracer использует PENABLECALLBACK/PREGHANDLE из Windows-ETW
+    // evntprov.h — недоступны нам. Skip на TARGET_SHARPOS.
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     class CEtwTracer
     {
 #if defined(FEATURE_EVENT_TRACE)
@@ -746,7 +760,7 @@ namespace ETW
         }
 #endif // FEATURE_EVENT_TRACE
     };
-#endif // !defined(HOST_UNIX)
+#endif // !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 
     class LoaderLog;
     class MethodLog;
@@ -818,7 +832,7 @@ namespace ETW
 
     class SamplingLog
     {
-#if defined(FEATURE_EVENT_TRACE) && !defined(HOST_UNIX)
+#if defined(FEATURE_EVENT_TRACE) && !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     public:
         typedef enum _EtwStackWalkStatus
         {
@@ -1195,7 +1209,7 @@ EXTERN_C DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_D
 EXTERN_C DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_STRESS_PROVIDER_DOTNET_Context;
 #endif // FEATURE_EVENT_TRACE
 
-#if defined(FEATURE_EVENT_TRACE) && !defined(HOST_UNIX)
+#if defined(FEATURE_EVENT_TRACE) && !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 //
 // The ONE and only ONE global instantiation of this class
 //
@@ -1368,7 +1382,7 @@ struct CallStackFrame
 #endif // TARGET_X86
 #endif // FEATURE_EVENT_TRACE
 
-#if defined(FEATURE_EVENT_TRACE) && !defined(HOST_UNIX)
+#if defined(FEATURE_EVENT_TRACE) && !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 FORCEINLINE
 BOOLEAN __stdcall
 McGenEventProviderEnabled(

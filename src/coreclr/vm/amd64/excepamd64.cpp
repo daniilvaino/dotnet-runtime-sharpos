@@ -48,14 +48,15 @@ inline PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrameWorker(UINT_PTR establi
     return *ppContext;
 }
 
-#ifdef TARGET_WINDOWS
+/* SharpOS port: match excepcpu.h gate — needed by FixRedirectContextHandler. */
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(DISPATCHER_CONTEXT * pDispatcherContext)
 {
     LIMITED_METHOD_DAC_CONTRACT;
 
     return GetCONTEXTFromRedirectedStubStackFrameWorker(pDispatcherContext->EstablisherFrame);
 }
-#endif // TARGET_WINDOWS
+#endif // TARGET_WINDOWS || TARGET_SHARPOS
 
 PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(CONTEXT * pContext)
 {
@@ -65,14 +66,15 @@ PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(CONTEXT * pContext)
 }
 
 #if !defined(DACCESS_COMPILE)
-#ifdef TARGET_WINDOWS
+/* SharpOS port: helper referenced by ungated FixupDispatcherContext path. */
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 FaultingExceptionFrame *GetFrameFromRedirectedStubStackFrame (DISPATCHER_CONTEXT *pDispatcherContext)
 {
     LIMITED_METHOD_CONTRACT;
 
     return (FaultingExceptionFrame*)(pDispatcherContext->EstablisherFrame + THROWSTUB_ESTABLISHER_OFFSET_FaultingExceptionFrame);
 }
-#endif // TARGET_WINDOWS
+#endif // TARGET_WINDOWS || TARGET_SHARPOS
 
 #define AMD64_SIZE64_PREFIX 0x48
 #define AMD64_ADD_IMM8_OP 0x83

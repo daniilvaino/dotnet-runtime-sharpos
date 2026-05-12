@@ -110,9 +110,18 @@ typedef DPTR(struct DebuggerIPCControlBlock) PTR_DebuggerIPCControlBlock;
 
 GPTR_DECL(Debugger,         g_pDebugger);
 GPTR_DECL(EEDebugInterface, g_pEEInterface);
+/* SharpOS port: extern "C" linkage matches cpp definition (unmangled для .def export). */
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" ULONG CLRJitAttachState;
+#else
 GVAL_DECL(ULONG,            CLRJitAttachState);
-#ifndef TARGET_UNIX
+#endif
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" HANDLE g_hContinueStartupEvent;
+#else
 GVAL_DECL(HANDLE,           g_hContinueStartupEvent);
+#endif
 #endif
 extern DebuggerRCThread     *g_pRCThread;
 
@@ -3958,7 +3967,8 @@ HANDLE OpenWin32EventOrThrow(
 // Returns true if the specified IL offset has a special meaning (eg. prolog, etc.)
 bool DbgIsSpecialILOffset(DWORD offset);
 
-#if defined(TARGET_WINDOWS) && !defined(TARGET_X86)
+/* SharpOS port: match cpp ungated gate. */
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && !defined(TARGET_X86)
 void FixupDispatcherContext(T_DISPATCHER_CONTEXT* pDispatcherContext, T_CONTEXT* pContext, PEXCEPTION_ROUTINE pUnwindPersonalityRoutine = NULL);
 #endif
 

@@ -542,10 +542,10 @@ inline bool CORDebuggerAttached()
 #define CORDebuggerTraceCall() \
     (CORDebuggerAttached() && GetThread()->IsTraceCall())
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 GVAL_DECL(SIZE_T, g_runtimeLoadedBaseAddress);
 GVAL_DECL(SIZE_T, g_runtimeVirtualSize);
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 
 #ifndef MAXULONG

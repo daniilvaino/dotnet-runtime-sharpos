@@ -21,9 +21,13 @@
 #define CROSS_COMPILE
 #endif // TARGET_WINDOWS && !HOST_WINDOWS && !CROSS_COMPILE
 
-#if defined(TARGET_UNIX) && !defined(HOST_UNIX) && !defined(CROSS_COMPILE)
+// SharpOS port: TARGET_UNIX coexists с HOST_WINDOWS (we route через Win32 для phase 6.1),
+// но это NOT cross-compile — мы строим native PE/COFF для SharpOS guest на Windows host
+// same arch (amd64). CROSS_COMPILE здесь автоматически выставился бы и сломал _DEBUG
+// gates (Module::ExpandAll и пр.).
+#if defined(TARGET_UNIX) && !defined(HOST_UNIX) && !defined(CROSS_COMPILE) && !defined(TARGET_SHARPOS)
 #define CROSS_COMPILE
-#endif // TARGET_UNIX && !HOST_UNIX && !CROSS_COMPILE
+#endif // TARGET_UNIX && !HOST_UNIX && !CROSS_COMPILE && !TARGET_SHARPOS
 
 // Target platform-specific library naming
 //

@@ -29,7 +29,8 @@
 #include <limits>
 #include <algorithm>
 
-#ifdef TARGET_WINDOWS
+// SharpOS port: pthread.h unavailable на HOST_WINDOWS. Use windows.h (HOST_WINDOWS path).
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 #include <windows.h>
 #else
 #include <pthread.h>

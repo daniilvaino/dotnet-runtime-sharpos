@@ -40,18 +40,20 @@ EXTERN_C void RedirectForThrowControl();
 // Retrieves the redirected CONTEXT* from the stack frame of one of the
 // RedirectedHandledJITCaseForXXX_Stub's.
 //
-#ifdef TARGET_WINDOWS
+/* SharpOS port: DISPATCHER_CONTEXT overload — Windows EH personality routine. */
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(DISPATCHER_CONTEXT * pDispatcherContext);
-#endif // TARGET_WINDOWS
+#endif // TARGET_WINDOWS || TARGET_SHARPOS
 PTR_CONTEXT GetCONTEXTFromRedirectedStubStackFrame(CONTEXT * pContext);
 
-#ifdef TARGET_WINDOWS
+/* SharpOS port: match cpp ungated gate. */
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 //
 // Retrieves the FaultingExceptionFrame* from the stack frame of
 // RedirectForThrowControl.
 //
 FaultingExceptionFrame *GetFrameFromRedirectedStubStackFrame (DISPATCHER_CONTEXT *pDispatcherContext);
-#endif // TARGET_WINDOWS
+#endif // TARGET_WINDOWS || TARGET_SHARPOS
 
 //
 // Functions that wrap RtlVirtualUnwind to make sure that in the AMD64 case all the

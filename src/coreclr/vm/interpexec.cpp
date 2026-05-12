@@ -467,9 +467,10 @@ void InterpExecMethod(InterpreterFrame *pInterpreterFrame, InterpMethodContextFr
     }
     CONTRACTL_END;
 
-#if defined(HOST_AMD64) && defined(HOST_WINDOWS)
+// SharpOS port: _rdsspq — CET shadow stack intrinsic, requires TARGET_WINDOWS.
+#if defined(HOST_AMD64) && defined(HOST_WINDOWS) && defined(TARGET_WINDOWS)
     pInterpreterFrame->SetInterpExecMethodSSP((TADDR)_rdsspq());
-#endif // HOST_AMD64 && HOST_WINDOWS
+#endif // HOST_AMD64 && HOST_WINDOWS && TARGET_WINDOWS
 
     const int32_t *ip;
     int8_t *stack;

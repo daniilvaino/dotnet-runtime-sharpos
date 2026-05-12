@@ -45,7 +45,9 @@
 #include "eventtracepriv.h"
 #include "debugdebugger.h"
 
-#ifndef HOST_UNIX
+// SharpOS port: Windows-ETW PROVIDER_Context names не emitted (нет ETW manifest).
+// Take Linux-shape LTTNG context defs.
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_PROVIDER_DOTNET_Context = { &MICROSOFT_WINDOWS_DOTNETRUNTIME_PROVIDER_Context, MICROSOFT_WINDOWS_DOTNETRUNTIME_PROVIDER_EVENTPIPE_Context };
 DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_DOTNET_Context = { &MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_Context, MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_EVENTPIPE_Context };
 DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_DOTNET_Context = { &MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_Context, MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_EVENTPIPE_Context };
@@ -55,7 +57,7 @@ DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_PROVIDER_DOTNET_Context = {
 DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_DOTNET_Context = { MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_EVENTPIPE_Context, &MICROSOFT_WINDOWS_DOTNETRUNTIME_PRIVATE_PROVIDER_LTTNG_Context };
 DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_DOTNET_Context = { MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_EVENTPIPE_Context, &MICROSOFT_WINDOWS_DOTNETRUNTIME_RUNDOWN_PROVIDER_LTTNG_Context };
 DOTNET_TRACE_CONTEXT MICROSOFT_WINDOWS_DOTNETRUNTIME_STRESS_PROVIDER_DOTNET_Context = { MICROSOFT_WINDOWS_DOTNETRUNTIME_STRESS_PROVIDER_EVENTPIPE_Context, &MICROSOFT_WINDOWS_DOTNETRUNTIME_STRESS_PROVIDER_LTTNG_Context };
-#endif // HOST_UNIX
+#endif // HOST_UNIX || TARGET_SHARPOS
 
 #ifdef FEATURE_NATIVEAOT
 volatile LONGLONG ETW::GCLog::s_l64LastClientSequenceNumber = 0;
@@ -245,7 +247,9 @@ extern "C"
 /*************************************/
 /* Function to append a frame to an existing stack */
 /*************************************/
-#if  !defined(HOST_UNIX)
+// SharpOS port: match SamplingLog declaration gate в eventtracebase.h:835 —
+// `!HOST_UNIX && !TARGET_SHARPOS` (Windows-ETW MCGEN_TRACE_CONTEXT-only).
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 void ETW::SamplingLog::Append(SIZE_T currentFrame)
 {
     LIMITED_METHOD_CONTRACT;
@@ -418,7 +422,7 @@ ETW::SamplingLog::EtwStackWalkStatus ETW::SamplingLog::SaveCurrentStack(int skip
     return ETW::SamplingLog::Completed;
 }
 
-#endif // !defined(HOST_UNIX)
+#endif // !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 #endif // !FEATURE_NATIVEAOT
 
 /****************************************************************************/
@@ -2259,7 +2263,7 @@ void InitializeEventTracing()
     if (FAILED(hr))
         return;
 
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     // Register CLR providers with the OS
     if (g_pEtwTracer == NULL)
     {
@@ -2314,7 +2318,7 @@ enum SessionChange
     EtwSessionChangeUnknown = 2
 };
 
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 // EventFilterType identifies the filter type used by the PEVENT_FILTER_DESCRIPTOR
 enum EventFilterType
 {
@@ -2393,7 +2397,7 @@ VOID EtwCallbackCommon(
     LIMITED_METHOD_CONTRACT;
 
     bool bIsPublicTraceHandle = ProviderIndex == DotNETRuntime;
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     static_assert(GCEventLevel_Fatal == TRACE_LEVEL_FATAL, "GCEventLevel_Fatal value mismatch");
     static_assert(GCEventLevel_Error == TRACE_LEVEL_ERROR, "GCEventLevel_Error value mismatch");
     static_assert(GCEventLevel_Warning == TRACE_LEVEL_WARNING, "GCEventLevel_Warning mismatch");
@@ -2437,7 +2441,7 @@ VOID EtwCallbackCommon(
     if ((ControlCode == EVENT_CONTROL_CODE_ENABLE_PROVIDER || ControlCode == EVENT_CONTROL_CODE_DISABLE_PROVIDER) &&
         (ProviderIndex == DotNETRuntime || ProviderIndex == DotNETRuntimePrivate))
     {
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
         // On Windows, consolidate level and keywords across event pipe and ETW contexts -
         // ETW may still want to see events that event pipe doesn't care about and vice versa
         GCEventKeyword keywords = static_cast<GCEventKeyword>(ctxToUpdate->EventPipeProvider.EnabledKeywordsBitmask |
@@ -2472,7 +2476,7 @@ VOID EtwCallbackCommon(
         // Profilers may (optionally) specify extra data in the filter parameter
         // to log with the GCStart event.
         LONGLONG l64ClientSequenceNumber = 0;
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
         ParseFilterDataClientSequenceNumber((PEVENT_FILTER_DESCRIPTOR)pFilterData, &l64ClientSequenceNumber);
 #endif // !defined(HOST_UNIX)
         ETW::GCLog::ForceGC(l64ClientSequenceNumber);
@@ -2558,7 +2562,7 @@ VOID EventPipeEtwCallbackDotNETRuntimePrivate(
 }
 
 
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
 HRESULT ETW::CEtwTracer::Register()
 {
     WRAPPER_NO_CONTRACT;

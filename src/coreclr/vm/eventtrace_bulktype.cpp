@@ -132,7 +132,7 @@ void BulkComLogger::FlushRcw()
 
     unsigned short instance = GetClrInstanceId();
 
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     EVENT_DATA_DESCRIPTOR eventData[3];
     EventDataDescCreate(&eventData[0], &m_currRcw, sizeof(const unsigned int));
     EventDataDescCreate(&eventData[1], &instance, sizeof(const unsigned short));
@@ -223,7 +223,7 @@ void BulkComLogger::FlushCcw()
 
     unsigned short instance = GetClrInstanceId();
 
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     EVENT_DATA_DESCRIPTOR eventData[3];
     EventDataDescCreate(&eventData[0], &m_currCcw, sizeof(const unsigned int));
     EventDataDescCreate(&eventData[1], &instance, sizeof(const unsigned short));
@@ -427,7 +427,7 @@ void BulkStaticsLogger::FireBulkStaticsEvent()
     unsigned short instance = GetClrInstanceId();
     uint64_t appDomain = (uint64_t)m_domain;
 
-#if !defined(HOST_UNIX)
+#if !defined(HOST_UNIX) && !defined(TARGET_SHARPOS)
     EVENT_DATA_DESCRIPTOR eventData[4];
     EventDataDescCreate(&eventData[0], &m_count, sizeof(const unsigned int)  );
     EventDataDescCreate(&eventData[1], &appDomain, sizeof(uint64_t)  );

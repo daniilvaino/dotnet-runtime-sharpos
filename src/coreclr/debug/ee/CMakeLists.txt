@@ -56,10 +56,12 @@ endif ()
 convert_to_absolute_path(CORDBEE_SOURCES_DAC ${CORDBEE_SOURCES_DAC})
 convert_to_absolute_path(CORDBEE_SOURCES_WKS ${CORDBEE_SOURCES_WKS})
 
-if (CLR_CMAKE_TARGET_WIN32)
+# SharpOS port: headers appended to sources in wks subdir когда TARGET_WIN32 path —
+# convert paths сюда тоже на TARGET_SHARPOS, иначе cmake не находит controller.h etc.
+if (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
   convert_to_absolute_path(CORDBEE_HEADERS_DAC ${CORDBEE_HEADERS_DAC})
   convert_to_absolute_path(CORDBEE_HEADERS_WKS ${CORDBEE_HEADERS_WKS})
-endif (CLR_CMAKE_TARGET_WIN32)
+endif()
 
 set(CORDBEE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 

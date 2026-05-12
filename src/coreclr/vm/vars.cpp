@@ -187,10 +187,10 @@ GVAL_IMPL(DWORD, g_fEEShutDown);
 GVAL_IMPL(Volatile<DWORD>, g_fEEShutDown);
 #endif
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 GVAL_IMPL(SIZE_T, g_runtimeLoadedBaseAddress);
 GVAL_IMPL(SIZE_T, g_runtimeVirtualSize);
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 #ifndef DACCESS_COMPILE
 

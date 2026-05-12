@@ -971,7 +971,9 @@ bool CanJITOptimizeTLSAccess()
 extern "C" void* __tls_get_addr(void* ti);
 #endif // !_MSC_VER
 
-#if defined(TARGET_WINDOWS)
+// SharpOS port: take Windows TLS path — clang-cl emits _tls_index symbol,
+// SharpOS provides TEB-compatible TLS layout (Phase 5.5).
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 EXTERN_C uint32_t _tls_index;
 /*********************************************************************/
 static uint32_t ThreadLocalOffset(void* p)
@@ -1072,7 +1074,9 @@ void GetThreadLocalStaticBlocksInfo(CORINFO_THREAD_STATIC_BLOCKS_INFO* pInfo)
     STANDARD_VM_CONTRACT;
     size_t threadStaticBaseOffset = 0;
 
-#if defined(TARGET_WINDOWS)
+// SharpOS port: TLS bring-up — Phase 5.5 native, наш TLS на TEB-compatible layout
+// (clang-cl emits Windows-style _tls_index). Take Windows branch.
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
     pInfo->tlsIndex.addr = (void*)static_cast<uintptr_t>(_tls_index);
     pInfo->tlsIndex.accessType = IAT_VALUE;
 

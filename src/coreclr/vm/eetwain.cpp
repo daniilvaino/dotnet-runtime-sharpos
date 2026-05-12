@@ -2122,7 +2122,13 @@ void EECodeManager::ResumeAfterCatch(CONTEXT *pContext, size_t targetSSP, bool f
 
 size_t GetSSPForFrameOnCurrentStack(TADDR ip)
 {
+#if defined(TARGET_SHARPOS)
+    /* SharpOS port: CET shadow stack disabled (clang-cl requires -mshstk для
+     * _rdsspq intrinsic). Return 0 → SSP feature inert на kernel build. */
+    size_t *targetSSP = nullptr;
+#else
     size_t *targetSSP = (size_t *)_rdsspq();
+#endif
     // The SSP we search is pointing to the return address of the frame represented
     // by the passed in IP. So we search for the instruction pointer from
     // the context and return one slot up from there.
@@ -2242,7 +2248,8 @@ void InterpreterCodeManager::ResumeAfterCatch(CONTEXT *pContext, size_t targetSS
         // Move over all native frames until we move over the resumeSP
         while ((GetSP(pContext) < resumeSP) && !ExecutionManager::IsManagedCode(GetIP(pContext)))
         {
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_VirtualUnwind = libunwind PAL. Use .pdata-based unwind.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
             PAL_VirtualUnwind(pContext, NULL);
 #else
             Thread::VirtualUnwindCallFrame(pContext);

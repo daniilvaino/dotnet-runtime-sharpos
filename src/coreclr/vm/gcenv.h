@@ -39,7 +39,10 @@
 #include "gcenv.interlocked.h"
 #include "gcenv.interlocked.inl"
 
-#ifdef TARGET_UNIX
+// SharpOS port: align с gc/gcenv.inl which dispatches на _WIN32 (HOST), не TARGET_UNIX.
+// На HOST_WINDOWS+TARGET_UNIX combo both files должны соглашаться, иначе
+// GetPageSize redefinition between unix.inl и windows.inl.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 #include "gcenv.unix.inl"
 #else
 #include "gcenv.windows.inl"

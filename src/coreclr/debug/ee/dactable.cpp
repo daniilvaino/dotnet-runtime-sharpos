@@ -56,7 +56,11 @@ struct is_type_template_instantiation<U<T>, U>
     constexpr static bool m_value = true;
 };
 
-#ifdef _MSC_VER
+// SharpOS port: clang-cl defines _MSC_VER но emit'ит linker directive с MSVC vtable
+// mangled names (`??_7X@@6B@`) в .drectve section .obj файла. lld-link rejects `@`
+// chars в .drectve — vanilla MSVC link.exe accepts. Route through non-MSVC dynamic
+// initialization path (InitializeEntries below).
+#if defined(_MSC_VER) && !defined(TARGET_SHARPOS)
 // Based on the MSVC name mangling convention, use the /ALTERNATENAME linker switch to provide C-friendly symbol names
 // for each vtable we care about.
 #define DEFINE_ALTERNATENAME_3(part) _Pragma(#part)

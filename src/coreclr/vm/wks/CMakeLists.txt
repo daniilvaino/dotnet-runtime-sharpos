@@ -1,11 +1,11 @@
-if (CLR_CMAKE_TARGET_WIN32)
+if (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
   if(CLR_CMAKE_HOST_ARCH_ARM OR CLR_CMAKE_HOST_ARCH_ARM64)
     preprocess_files(VM_SOURCES_WKS_ARCH_ASM ${VM_SOURCES_WKS_ARCH_ASM})
     if (CMAKE_GENERATOR MATCHES "Visual Studio")
       compile_asm(TARGET cee_wks_core ASM_FILES ${VM_SOURCES_WKS_ARCH_ASM} OUTPUT_OBJECTS VM_WKS_ARCH_ASM_OBJECTS)
     endif()
   endif()
-endif (CLR_CMAKE_TARGET_WIN32)
+endif (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 
 add_library_clr(cee_wks_core OBJECT ${VM_SOURCES_WKS} ${VM_SOURCES_WKS_ARCH_ASM})
 add_library_clr(cee_wks OBJECT ${VM_SOURCES_WKS_SPECIAL})
@@ -24,7 +24,7 @@ add_dependencies(cee_wks_core eventing_headers)
 add_dependencies(cee_wks eventing_headers)
 add_dependencies(cee_wks_mergeable eventing_headers)
 
-if (CLR_CMAKE_TARGET_WIN32)
+if (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
   if(NOT CLR_CMAKE_HOST_ARCH_ARM AND NOT CLR_CMAKE_HOST_ARCH_ARM64)
 
     if (CLR_CMAKE_HOST_ARCH_I386)
@@ -42,7 +42,7 @@ if (CLR_CMAKE_TARGET_WIN32)
     add_dependencies(cee_wks_mergeable asmconstants_inc)
 
   endif(NOT CLR_CMAKE_HOST_ARCH_ARM AND NOT CLR_CMAKE_HOST_ARCH_ARM64)
-endif (CLR_CMAKE_TARGET_WIN32)
+endif (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 
 add_custom_target(precompiled_asm DEPENDS ${VM_WKS_ARCH_ASM_OBJECTS})
 add_dependencies(cee_wks_core precompiled_asm)

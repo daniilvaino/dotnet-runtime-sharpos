@@ -231,7 +231,7 @@ ds_rt_transport_get_default_name (
 {
 	STATIC_CONTRACT_NOTHROW;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 	PAL_GetTransportName (name_len, name, prefix, id, group_id, suffix);
 #endif
 	return true;

@@ -305,7 +305,10 @@ HRESULT LoadAndInitializeGC(LPCWSTR standaloneGCName, LPCWSTR standaloneGCPath)
     {
         PTR_VOID pGcModuleBase;
 
-#if TARGET_WINDOWS
+// SharpOS port: PAL_GetSymbolModuleBase — libdl-based на Linux PAL. На TARGET_SHARPOS
+// standalone GC статически linked в kernel image → hMod от LoadLibrary path (Windows
+// HMODULE typedef из pal/sharpos shims) подходит.
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
         pGcModuleBase = (PTR_VOID)hMod;
 #else
         pGcModuleBase = (PTR_VOID)PAL_GetSymbolModuleBase((PVOID)initFunc);

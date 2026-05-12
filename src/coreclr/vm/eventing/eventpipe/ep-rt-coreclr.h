@@ -932,12 +932,12 @@ ep_rt_thread_sleep (uint64_t ns)
 {
 	STATIC_CONTRACT_NOTHROW;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 	PAL_nanosleep (ns);
-#else  //TARGET_UNIX
+#else  //TARGET_UNIX && !TARGET_SHARPOS
 	const uint32_t NUM_NANOSECONDS_IN_1_MS = 1000000;
 	ClrSleepEx (static_cast<DWORD>(ns / NUM_NANOSECONDS_IN_1_MS), FALSE);
-#endif //TARGET_UNIX
+#endif //TARGET_UNIX && !TARGET_SHARPOS
 }
 
 static
@@ -986,7 +986,7 @@ ep_rt_current_thread_get_id (void)
 {
 	STATIC_CONTRACT_NOTHROW;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 	return static_cast<ep_rt_thread_id_t>(::PAL_GetCurrentOSThreadId ());
 #else
 	return static_cast<ep_rt_thread_id_t>(::GetCurrentThreadId ());

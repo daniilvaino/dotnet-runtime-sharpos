@@ -367,7 +367,7 @@ extern "C" UINT64 QCALLTYPE ThreadNative_GetCurrentOSThreadId()
     UINT64 threadId = 0;
 
     BEGIN_QCALL;
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     threadId = (UINT64) GetCurrentThreadId();
 #else
     threadId = (UINT64) PAL_GetCurrentOSThreadId();

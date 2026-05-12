@@ -13,15 +13,15 @@ extern bool g_hostpolicy_embedded;
 // remove when we get an updated SDK
 #define LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR 0x00000100
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 #define PLATFORM_SHARED_LIB_SUFFIX_W PAL_SHLIB_SUFFIX_W
 #define PLATFORM_SHARED_LIB_PREFIX_W PAL_SHLIB_PREFIX_W
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
 // The default for Windows OS is ".DLL". This causes issues with case-sensitive file systems on Windows.
 // We are using the lowercase version due to historical precedence and how common it is now.
 #define PLATFORM_SHARED_LIB_SUFFIX_W W(".dll")
 #define PLATFORM_SHARED_LIB_PREFIX_W W("")
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 // The Bit 0x2 has different semantics in DllImportSearchPath and LoadLibraryExA flags.
 // In DllImportSearchPath enum, bit 0x2 represents SearchAssemblyDirectory -- which is performed by CLR.
@@ -62,7 +62,7 @@ namespace
 
             DWORD priority;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
             SetMessage(PAL_GetLoadLibraryError());
 #else
             DWORD dwLastError = GetLastError();
@@ -164,7 +164,7 @@ namespace
 
         NATIVE_LIBRARY_HANDLE hmod = NULL;
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
         if ((flags & 0xFFFFFF00) != 0)
         {
             hmod = CLRLoadLibraryEx(name, NULL, flags & 0xFFFFFF00);
@@ -183,9 +183,9 @@ namespace
 
         hmod = CLRLoadLibraryEx(name, NULL, flags & 0xFF);
 
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
         hmod = PAL_LoadLibraryDirect(name);
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
         if (hmod == NULL)
         {
@@ -270,11 +270,11 @@ void NativeLibrary::FreeNativeLibrary(NATIVE_LIBRARY_HANDLE handle)
     STANDARD_VM_CONTRACT;
     _ASSERTE(handle != NULL);
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     BOOL retVal = FreeLibrary(handle);
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
     BOOL retVal = PAL_FreeLibraryDirect(handle);
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
     if (retVal == 0)
         COMPlusThrow(kInvalidOperationException, W("Arg_InvalidOperationException"));
@@ -293,22 +293,22 @@ INT_PTR NativeLibrary::GetNativeLibraryExport(NATIVE_LIBRARY_HANDLE handle, LPCW
 
     MAKE_UTF8PTR_FROMWIDE(lpstr, symbolName);
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     INT_PTR address = reinterpret_cast<INT_PTR>(GetProcAddress((HMODULE)handle, lpstr));
     if ((address == 0) && throwOnError)
         COMPlusThrow(kEntryPointNotFoundException, IDS_EE_NDIRECT_GETPROCADDR_WIN_DLL, symbolName);
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
     INT_PTR address = reinterpret_cast<INT_PTR>(PAL_GetProcAddressDirect(handle, lpstr));
     if ((address == 0) && throwOnError)
         COMPlusThrow(kEntryPointNotFoundException, IDS_EE_NDIRECT_GETPROCADDR_UNIX_SO, symbolName);
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
     return address;
 }
 
 namespace
 {
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     BOOL IsWindowsAPISet(PCWSTR wszLibName)
     {
         STANDARD_VM_CONTRACT;
@@ -317,13 +317,13 @@ namespace
         return SString::_wcsnicmp(wszLibName, W("api-"), 4) == 0 ||
                SString::_wcsnicmp(wszLibName, W("ext-"), 4) == 0;
     }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
     NATIVE_LIBRARY_HANDLE LoadNativeLibraryViaAssemblyLoadContext(Assembly * pAssembly, PCWSTR wszLibName)
     {
         STANDARD_VM_CONTRACT;
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
         if (IsWindowsAPISet(wszLibName))
         {
             // Prevent Overriding of Windows API sets.
@@ -646,7 +646,7 @@ namespace
 
         NATIVE_LIBRARY_HANDLE hmod = NULL;
 
-#if !defined(TARGET_UNIX)
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
         // Try to go straight to System32 for Windows API sets. This is replicating quick check from
         // the OS implementation of api sets.
         if (IsWindowsAPISet(wszLibName))
@@ -657,11 +657,11 @@ namespace
                 return hmod;
             }
         }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
         if (g_hostpolicy_embedded)
         {
-#ifdef TARGET_WINDOWS
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
             if (u16_strcmp(wszLibName, W("hostpolicy.dll")) == 0)
             {
                 return GetModuleHandle(NULL);
@@ -677,7 +677,7 @@ namespace
         AppDomain* pDomain = GetAppDomain();
         DWORD loadWithAlteredPathFlags = GetLoadWithAlteredSearchPathFlag();
         DWORD loadLibrarySearchFlags = 0;
-#ifdef TARGET_WINDOWS
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
         loadLibrarySearchFlags = LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR
             | LOAD_LIBRARY_SEARCH_APPLICATION_DIR
             | LOAD_LIBRARY_SEARCH_USER_DIRS

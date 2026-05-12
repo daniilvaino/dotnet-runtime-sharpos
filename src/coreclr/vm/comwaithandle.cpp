@@ -83,7 +83,10 @@ extern "C" INT32 QCALLTYPE WaitHandle_SignalAndWait(HANDLE waitHandleSignal, HAN
     return retVal;
 }
 
-#ifdef TARGET_UNIX
+// SharpOS port: WaitOnePrioritized — TARGET_UNIX-only QCall использующий
+// PAL_WaitForSingleObjectPrioritized из pal.h. Skip полностью на TARGET_SHARPOS —
+// managed BCL под Linux требует этот QCall, у нас он не reachable.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 extern "C" INT32 QCALLTYPE WaitHandle_WaitOnePrioritized(HANDLE handle, INT32 timeoutMs)
 {
     QCALL_CONTRACT;
@@ -100,4 +103,4 @@ extern "C" INT32 QCALLTYPE WaitHandle_WaitOnePrioritized(HANDLE handle, INT32 ti
     END_QCALL;
     return (INT32)result;
 }
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS

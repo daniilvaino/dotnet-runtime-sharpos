@@ -471,7 +471,9 @@ void FillInRegTypeMap(int argOffset, CorElementType typ, BYTE * pMap);
 /* Macros used to indicate a call to managed code is starting/ending   */
 /***********************************************************************/
 
-#ifdef TARGET_UNIX
+// SharpOS port: NativeExceptionHolderNoCatch — pal.h class (Linux PAL EH). На
+// TARGET_SHARPOS skip — native↔managed boundary tracking handled нашим own EH.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 // Install a native exception holder that doesn't catch any exceptions but its presence
 // in a stack range of native frames indicates that there was a call from native to
 // managed code. It is used by the DispatchManagedException to detect the case when
@@ -481,9 +483,9 @@ void FillInRegTypeMap(int argOffset, CorElementType typ, BYTE * pMap);
 #define INSTALL_CALL_TO_MANAGED_EXCEPTION_HOLDER() \
     NativeExceptionHolderNoCatch __exceptionHolder;    \
     __exceptionHolder.Push();
-#else // TARGET_UNIX
+#else // TARGET_UNIX && !TARGET_SHARPOS
 #define INSTALL_CALL_TO_MANAGED_EXCEPTION_HOLDER()
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 enum EEToManagedCallFlags
 {

@@ -9,6 +9,15 @@ include(${CLR_ENG_NATIVE_DIR}/configurecompiler.cmake)
 include_directories("${CLR_SRC_NATIVE_DIR}")
 include_directories("${CLR_SRC_NATIVE_DIR}/inc")
 
+# SharpOS port на Windows host: provide POSIX header shims (strings.h etc.)
+# which MSVC doesn't have but pal/inc/pal.h includes when TARGET_UNIX defined.
+# Added BEFORE так что pal/sharpos/include/strings.h overrides nothing if MSVC
+# has one (it doesn't, but defensive). Inherited by all subsystems (vm, gc,
+# jit, debug) that include pal.h.
+if (CLR_CMAKE_TARGET_SHARPOS)
+    include_directories(BEFORE "${CMAKE_CURRENT_SOURCE_DIR}/pal/sharpos/include")
+endif()
+
 if(MSVC)
   set(CMAKE_CXX_STANDARD_LIBRARIES "") # do not link against standard win32 libs i.e. kernel32, uuid, user32, etc.
 endif (MSVC)
@@ -67,7 +76,11 @@ include(components.cmake)
 #---------------------------
 # Build the single file host
 #---------------------------
-if(NOT CLR_CROSS_COMPONENTS_BUILD AND NOT CLR_CMAKE_TARGET_MACCATALYST AND NOT CLR_CMAKE_TARGET_IOS AND NOT CLR_CMAKE_TARGET_TVOS AND NOT CLR_CMAKE_TARGET_ARCH_WASM)
+# SharpOS port: skip singlefilehost — it pulls Unix-only system libs
+# (libgssapi_krb5, OpenSSL, libdl) which don't exist on Windows host и не
+# нужны на SharpOS bare-metal. Final link in SharpOS kernel image happens
+# в Phase 6.1 integration phase, not here.
+if(NOT CLR_CROSS_COMPONENTS_BUILD AND NOT CLR_CMAKE_TARGET_MACCATALYST AND NOT CLR_CMAKE_TARGET_IOS AND NOT CLR_CMAKE_TARGET_TVOS AND NOT CLR_CMAKE_TARGET_ARCH_WASM AND NOT CLR_CMAKE_TARGET_SHARPOS)
   set(CLR_SINGLE_FILE_HOST_ONLY 1)
   add_subdirectory(${CLR_SRC_NATIVE_DIR}/corehost/apphost/static Corehost.Static)
   add_dependencies(runtime singlefilehost)
@@ -82,7 +95,12 @@ endif()
 #-------------------------------
 # Include libraries native shims
 #-------------------------------
-if(NOT CLR_CROSS_COMPONENTS_BUILD)
+# SharpOS port: skip libs-native (System.Globalization.Native needs ICU
+# headers libuncode/ucurr.h, System.Security.Cryptography.OpenSsl.Native
+# needs OpenSSL — Unix-only deps not available on Windows host build for
+# TARGET_SHARPOS). These libs are not part of CoreCLR core; они .NET
+# class libraries native helpers, не нужны для Hello World через CoreCLR.
+if(NOT CLR_CROSS_COMPONENTS_BUILD AND NOT CLR_CMAKE_TARGET_SHARPOS)
   set(STATIC_LIBS_ONLY 1)
   add_subdirectory(${CLR_SRC_NATIVE_DIR}/libs libs-native)
 endif()
@@ -92,7 +110,7 @@ endif()
 #     - project which require platform header not clr's
 #     - do not depend on clr's compile definitions
 #-----------------------------------------
-if(CLR_CMAKE_HOST_UNIX)
+if(CLR_CMAKE_HOST_UNIX OR CLR_CMAKE_TARGET_SHARPOS)
     if(CLR_CMAKE_TARGET_ANDROID AND NOT DEFINED CMAKE_ANDROID_NDK)
         find_library(LZMA NAMES lzma)
         if(LZMA STREQUAL LZMA-NOTFOUND)
@@ -109,9 +127,14 @@ if(CLR_CMAKE_HOST_UNIX)
       add_linker_flag(-Wl,-z,notext)
     endif()
 
+    # SharpOS production port (per sage 2 confirmation): pal/ subdirectory
+    # must be reachable when TARGET_SHARPOS, regardless of HOST_UNIX.
+    # Inside pal/CMakeLists.txt — conditional chooses pal/sharpos/ vs pal/src/.
     add_subdirectory(pal)
 
-    if(NOT CLR_CMAKE_HOST_MACCATALYST AND NOT CLR_CMAKE_HOST_IOS AND NOT CLR_CMAKE_HOST_TVOS)
+    # hosts/ is Unix-specific corehost binary. Скип on TARGET_SHARPOS
+    # (мы делаем final link в SharpOS kernel image сами в Phase 6.1).
+    if(CLR_CMAKE_HOST_UNIX AND NOT CLR_CMAKE_HOST_MACCATALYST AND NOT CLR_CMAKE_HOST_IOS AND NOT CLR_CMAKE_HOST_TVOS)
       add_subdirectory(hosts)
     endif()
 else()
@@ -157,12 +180,13 @@ if (NOT CLR_CMAKE_TARGET_BROWSER)
   add_subdirectory(tools/aot/jitinterface)
 endif (NOT CLR_CMAKE_TARGET_BROWSER)
 
-if(NOT CLR_CROSS_COMPONENTS_BUILD)
-  # NativeAOT only buildable for a subset of CoreCLR-supported configurations
-  if(CLR_CMAKE_HOST_ARCH_ARM64 OR CLR_CMAKE_HOST_ARCH_AMD64 OR CLR_CMAKE_HOST_ARCH_ARM OR CLR_CMAKE_HOST_ARCH_LOONGARCH64 OR CLR_CMAKE_HOST_ARCH_RISCV64 OR (CLR_CMAKE_HOST_ARCH_I386 AND CLR_CMAKE_HOST_WIN32))
-    add_subdirectory(nativeaot)
-  endif()
-endif(NOT CLR_CROSS_COMPONENTS_BUILD)
+if(NOT CLR_CROSS_COMPONENTS_BUILD AND NOT CLR_CMAKE_TARGET_SHARPOS)
+  # NativeAOT only buildable for a subset of CoreCLR-supported configurations.
+  # Skip on TARGET_SHARPOS — SharpOS kernel build use its own NativeAOT
+  # toolchain, не CoreCLR fork's nativeaot/Runtime artifacts. Plus
+  # nativeaot/Runtime/unix/configure.cmake fails check_library_exists on
+  # Windows host без libdl/libunwind detection.
+endif()
 
 # Above projects do not build with these compile options
 # All of the compiler options are specified in file compileoptions.cmake
@@ -283,10 +307,12 @@ endif(CLR_CMAKE_HOST_UNIX)
 add_subdirectory(utilcode)
 add_subdirectory(inc)
 
-if (CLR_CMAKE_BUILD_TOOLS)
+if (CLR_CMAKE_BUILD_TOOLS AND NOT CLR_CMAKE_TARGET_SHARPOS)
+  # SharpOS port: ilasm/ildasm — host tools, require PAL_Initialize (Linux PAL).
+  # Не нужны для kernel image static lib. См. work/PAL/CORECLR_PORT_WINAPI_DEBT.md.
   add_subdirectory(ilasm)
   add_subdirectory(ildasm)
-endif(CLR_CMAKE_BUILD_TOOLS)
+endif()
 add_subdirectory(gcinfo)
 
 if (NOT CLR_CMAKE_TARGET_ARCH_WASM)
@@ -313,6 +339,6 @@ if(NOT CLR_CMAKE_HOST_MACCATALYST AND NOT CLR_CMAKE_HOST_IOS AND NOT CLR_CMAKE_H
   add_subdirectory(tools)
 endif(NOT CLR_CMAKE_HOST_MACCATALYST AND NOT CLR_CMAKE_HOST_IOS AND NOT CLR_CMAKE_HOST_TVOS)
 
-if(CLR_CMAKE_HOST_WIN32)
+if(CLR_CMAKE_HOST_WIN32 AND NOT CLR_CMAKE_TARGET_SHARPOS)
   add_subdirectory(hosts)
-endif(CLR_CMAKE_HOST_WIN32)
+endif()

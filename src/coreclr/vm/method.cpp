@@ -3335,7 +3335,9 @@ void PInvokeMethodDesc::InterlockedSetPInvokeFlags(WORD wFlags)
 }
 
 
-#ifdef TARGET_WINDOWS
+// SharpOS port: helpers used by FindEntryPoint Windows branch (which мы тоже
+// берём на TARGET_SHARPOS), see comment ниже на FindEntryPoint.
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 FARPROC PInvokeMethodDesc::FindEntryPointWithMangling(NATIVE_LIBRARY_HANDLE hMod, PTR_CUTF8 entryPointName)
 {
     CONTRACTL
@@ -3408,7 +3410,10 @@ LPVOID PInvokeMethodDesc::FindEntryPoint(NATIVE_LIBRARY_HANDLE hMod)
 
     char const * funcName = GetEntrypointName();
 
-#ifndef TARGET_WINDOWS
+// SharpOS port: PAL_GetProcAddressDirect — Linux PAL libdl wrapper. На наш build
+// GetProcAddress (Windows API через pal/sharpos shim) handles export resolution
+// для статически линкованных kernel modules.
+#if !defined(TARGET_WINDOWS) && !defined(TARGET_SHARPOS)
     return reinterpret_cast<LPVOID>(PAL_GetProcAddressDirect(hMod, funcName));
 #else
     // Handle ordinals.

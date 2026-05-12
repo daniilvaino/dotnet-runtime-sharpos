@@ -641,7 +641,9 @@ void Frame::UpdateFloatingPointRegisters(const PREGDISPLAY pRD)
     _ASSERTE(!ExecutionManager::IsManagedCode(::GetIP(pRD->pCurrentContext)));
     while (!ExecutionManager::IsManagedCode(::GetIP(pRD->pCurrentContext)))
     {
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_VirtualUnwind = libunwind PAL. На TARGET_SHARPOS — naш
+// .pdata unwinder через Thread::VirtualUnwindCallFrame (D13).
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
         PAL_VirtualUnwind(pRD->pCurrentContext, NULL);
 #else
         Thread::VirtualUnwindCallFrame(pRD);

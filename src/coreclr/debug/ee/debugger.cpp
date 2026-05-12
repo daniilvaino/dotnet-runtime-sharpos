@@ -62,7 +62,13 @@ SVAL_IMPL_INIT(BOOL, Debugger, s_fCanChangeNgenFlags, TRUE);
 
 // This is a public export so debuggers can read and determine if the coreclr
 // process is waiting for JIT debugging attach.
+/* SharpOS port: extern "C" — .def export by unmangled name, lld-link не decoration-match.
+ * DAC build uses GVAL_IMPL_INIT path (тянет __GlobalVal<ULONG> через dacvars.h). */
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" { ULONG CLRJitAttachState = 0; }
+#else
 GVAL_IMPL_INIT(ULONG, CLRJitAttachState, 0);
+#endif
 
 // The following instances are used for invoking overloaded new/delete
 InteropSafe interopsafe;
@@ -1729,14 +1735,17 @@ void Debugger::SendCreateProcess(DebuggerLockHolder * pDbgLockHolder)
     pDbgLockHolder->Acquire();
 }
 
-#if !defined(TARGET_UNIX)
+/* SharpOS port: HOST_WINDOWS provides startup event mechanism; extern "C" для unmangled export. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 
-HANDLE g_hContinueStartupEvent = INVALID_HANDLE_VALUE;
+extern "C" { HANDLE g_hContinueStartupEvent = INVALID_HANDLE_VALUE; }
 
+extern "C" {
 CLR_ENGINE_METRICS g_CLREngineMetrics = {
     sizeof(CLR_ENGINE_METRICS),
     CorDebugVersion_4_0,
     &g_hContinueStartupEvent};
+}
 
 HANDLE OpenStartupNotificationEvent()
 {
@@ -1779,7 +1788,7 @@ void NotifyDebuggerOfStartup()
     g_hContinueStartupEvent = NULL;
 }
 
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 void Debugger::CleanupTransportSocket(void)
 {
@@ -1963,7 +1972,8 @@ HRESULT Debugger::Startup(void)
     #endif
     }
 
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_NotifyRuntimeStarted = dbgshim IPC handshake — Linux PAL.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     // Signal the debugger (via dbgshim) and wait until it is ready for us to
     // continue. This needs to be outside the lock and after the transport is
     // initialized.
@@ -1975,7 +1985,7 @@ HRESULT Debugger::Startup(void)
         // in startup code or Main.
        MarkDebuggerAttachedInternal();
     }
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
     // We don't bother changing this process's permission.
     // A managed debugger will have the SE_DEBUG permission which will allow it to open our process handle,
@@ -13179,7 +13189,8 @@ void STDCALL ExceptionHijackWorker(
     // call SetThreadContext on ourself to fix us.
 }
 
-#if defined(FEATURE_EH_FUNCLETS) && !defined(TARGET_UNIX)
+/* SharpOS port: ungate — ExceptionHijack/FuncEvalHijack MASM stubs reference these. */
+#if defined(FEATURE_EH_FUNCLETS) && (!defined(TARGET_UNIX) || defined(TARGET_SHARPOS))
 
 #if defined(TARGET_AMD64)
 // ----------------------------------------------------------------------------

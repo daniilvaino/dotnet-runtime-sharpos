@@ -15,7 +15,11 @@ struct GCSystemInfo
 
 typedef void * HANDLE;
 
-#ifdef TARGET_UNIX
+// SharpOS port: на TARGET_SHARPOS используем не-Unix EEThreadId (uint64_t-based,
+// не pthread_t). Per D5 threading deferred to Phase 6.2; на Phase 6.1 thread
+// management functions = ABORT_FATAL stub, EEThreadId уп нужен только для
+// type completeness.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 
 class EEThreadId
 {

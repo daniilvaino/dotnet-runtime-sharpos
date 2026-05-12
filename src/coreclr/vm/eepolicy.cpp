@@ -345,7 +345,7 @@ void LogInfoForFatalError(UINT exitCode, LPCWSTR pszMessage, PEXCEPTION_POINTERS
     static size_t s_pCrashingThreadID;
 
     size_t currentThreadID;
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     currentThreadID = GetCurrentThreadId();
 #else
     currentThreadID = PAL_GetCurrentOSThreadId();

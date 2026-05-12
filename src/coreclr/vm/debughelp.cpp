@@ -22,11 +22,14 @@ BOOL isMemoryReadable(const TADDR start, unsigned len)
     }
     CONTRACTL_END;
 
-#if !defined(DACCESS_COMPILE) && defined(TARGET_UNIX)
+// SharpOS port: PAL_ProbeMemory из pal.h, not visible на HOST_WINDOWS build.
+// Use Windows-side ReadProcessMemory path below (compile-only correctness;
+// runtime memory probing — Phase 6.2 task).
+#if !defined(DACCESS_COMPILE) && defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 
     return PAL_ProbeMemory((PVOID)start, len, FALSE);
 
-#else // !DACCESS_COMPILE && TARGET_UNIX
+#else // !DACCESS_COMPILE && TARGET_UNIX && !TARGET_SHARPOS
 
     //
     // To accomplish this in a no-throw way, we have to touch each and every page

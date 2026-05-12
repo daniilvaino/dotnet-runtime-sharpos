@@ -71,9 +71,13 @@ class ComCallMethodDesc;
 #define INSTRFMT_K64SMALL
 #define INSTRFMT_K64
 
-#ifndef TARGET_UNIX
+// SharpOS port: redirect-based GC stress нужен — MASM RedirectedHandledJITCase.asm
+// emits call к Thread::RedirectedHandledJITCaseForGCStress под _DEBUG && HAVE_GCCOVER
+// (MASM не видит USE_REDIRECT_FOR_GCSTRESS). Без macro здесь C++ definition excluded
+// → undefined symbol на link.
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 #define USE_REDIRECT_FOR_GCSTRESS
-#endif // TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 //
 // REX prefix byte

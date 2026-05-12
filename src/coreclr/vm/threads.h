@@ -230,14 +230,15 @@ struct Dbg_TrackSync
 // Used to capture information about the state of execution of a *SUSPENDED* thread.
 struct ExecutionState;
 
-#ifndef TARGET_UNIX
+/* SharpOS port: match threadsuspend.cpp ungated RedirectedHandledJITCase. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 // This is the type of the start function of a redirected thread pulled from
 // a HandledJITCase during runtime suspension
 typedef void (__stdcall *PFN_REDIRECTTARGET)();
 
 // Describes the weird argument sets during hijacking
 struct HijackArgs;
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 #endif // FEATURE_HIJACK
 
@@ -957,7 +958,8 @@ public:
     // we fire the AllocationTick event. It's only for tooling purpose.
     TypeHandle m_thAllocContextObj;
 
-#ifndef TARGET_UNIX
+/* SharpOS port: TEB available на HOST_WINDOWS — нужен для RedirectedHandledJITCase. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 private:
     _NT_TIB *m_pTEB;
 public:
@@ -969,7 +971,7 @@ public:
         WRAPPER_NO_CONTRACT;
         return &GetTEB()->ExceptionList;
     }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
     inline void SetTHAllocContextObj(TypeHandle th) {LIMITED_METHOD_CONTRACT; m_thAllocContextObj = th; }
 
@@ -2357,7 +2359,8 @@ public:
     static void SetCulture(OBJECTREF *CultureObj, BOOL bUICulture);
 
 private:
-#if defined(FEATURE_HIJACK) && !defined(TARGET_UNIX)
+/* SharpOS port: match cpp ungated block. */
+#if defined(FEATURE_HIJACK) && (!defined(TARGET_UNIX) || defined(TARGET_SHARPOS))
     // Used in suspension code to redirect a thread at a HandledJITCase
     BOOL RedirectThreadAtHandledJITCase(PFN_REDIRECTTARGET pTgt);
     BOOL RedirectCurrentThreadAtHandledJITCase(PFN_REDIRECTTARGET pTgt, T_CONTEXT *pCurrentThreadCtx);
@@ -2376,7 +2379,7 @@ private:
 public:
     BOOL CheckForAndDoRedirectForGCStress (T_CONTEXT *pCurrentThreadCtx);
 #endif // HAVE_GCCOVER && USE_REDIRECT_FOR_GCSTRESS
-#endif // FEATURE_HIJACK && !TARGET_UNIX
+#endif // FEATURE_HIJACK && (!TARGET_UNIX || TARGET_SHARPOS)
 
 public:
 
@@ -2489,7 +2492,8 @@ public:
     // space to restore the guard page, so make sure you know what you're doing when you decide to call this.
     VOID RestoreGuardPage();
 
-#if defined(FEATURE_HIJACK) && !defined(TARGET_UNIX)
+/* SharpOS port: match cpp ungated block. */
+#if defined(FEATURE_HIJACK) && (!defined(TARGET_UNIX) || defined(TARGET_SHARPOS))
 private:
     // Redirecting of threads in managed code at suspension
 
@@ -2627,7 +2631,8 @@ private:
     VOID       **m_ppvHJRetAddrPtr;       // place we bashed a new return address
     MethodDesc  *m_HijackedFunction;      // remember what we hijacked
 
-#ifndef TARGET_UNIX
+/* SharpOS port: match cpp ungated. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     BOOL    HandledJITCase();
 
 #ifdef TARGET_X86
@@ -2635,7 +2640,7 @@ private:
     ULONG       m_SpinCount;
 #endif // TARGET_X86
 
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 #endif // FEATURE_HIJACK
 

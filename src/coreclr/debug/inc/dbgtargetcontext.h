@@ -292,7 +292,9 @@ typedef struct DECLSPEC_ALIGN(16) {
     DWORD64 LastExceptionFromRip;
 } DT_CONTEXT;
 
-#if !defined(CROSS_COMPILE) && !defined(TARGET_WINDOWS)
+// SharpOS port: T_CONTEXT — Windows-shaped (no XStateFeaturesMask field). До CROSS_COMPILE
+// fix этот assert работал случайно, потому что CROSS_COMPILE автоматически set'илось.
+#if !defined(CROSS_COMPILE) && !defined(TARGET_WINDOWS) && !defined(TARGET_SHARPOS)
 static_assert(sizeof(DT_CONTEXT) == offsetof(T_CONTEXT, XStateFeaturesMask), "DT_CONTEXT must not include the XSTATE registers on AMD64");
 #else
 static_assert(sizeof(DT_CONTEXT) == sizeof(T_CONTEXT), "DT_CONTEXT size must equal the T_CONTEXT size on AMD64");

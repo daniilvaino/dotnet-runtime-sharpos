@@ -630,7 +630,9 @@ typedef SIZE_T TSIZE_T;
 
 typedef struct _DacGlobals
 {
-#ifdef _MSC_VER
+// SharpOS port: соответствует dactable.cpp ветке — clang-cl emits MSVC vtable
+// mangling в .drectve, lld-link rejects → используем dynamic init path.
+#if defined(_MSC_VER) && !defined(TARGET_SHARPOS)
 private:
     const static _DacGlobals s_dacGlobals;
 #else

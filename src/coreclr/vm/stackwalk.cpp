@@ -690,9 +690,10 @@ UINT_PTR Thread::VirtualUnwindToFirstManagedCallFrame(T_CONTEXT* pContext)
             SetIP(pContext, uControlPc);
         }
 
-#ifndef TARGET_UNIX
+// SharpOS port: PAL_VirtualUnwind libunwind PAL. Use .pdata Windows path.
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
         uControlPc = VirtualUnwindCallFrame(pContext);
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
 
         if (AdjustContextForVirtualStub(NULL, pContext))
         {

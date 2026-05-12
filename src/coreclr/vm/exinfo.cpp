@@ -326,10 +326,14 @@ ExInfo::ExInfo(Thread *pThread, EXCEPTION_RECORD *pExceptionRecord, CONTEXT *pEx
     m_CurrentClause({}),
     m_pMDToReportFunctionLeave(NULL),
     m_reportedFunctionEnterWasForFunclet(false)
-#ifdef HOST_WINDOWS
+// SharpOS port: exinfo.h declares m_pLongJmpBuf/m_longJmpReturnValue под
+// #ifdef TARGET_WINDOWS, но cpp initialized их под #ifdef HOST_WINDOWS — vanilla
+// CoreCLR mismatch surfacing на нашем HOST_WINDOWS+TARGET_UNIX hybrid. Match
+// declaration's TARGET_WINDOWS gate.
+#ifdef TARGET_WINDOWS
     , m_pLongJmpBuf(NULL),
     m_longJmpReturnValue(0)
-#endif // HOST_WINDOWS
+#endif // TARGET_WINDOWS
 {
     pThread->GetExceptionState()->m_pCurrentTracker = this;
     m_pInitialFrame = pThread->GetFrame();
@@ -353,7 +357,10 @@ ExInfo::ExInfo(Thread *pThread, EXCEPTION_RECORD *pExceptionRecord, CONTEXT *pEx
 #endif // !TARGET_UNIX
 }
 
-#if defined(TARGET_UNIX)
+// SharpOS port: TakeExceptionPointersOwnership / PAL_FreeExceptionRecords —
+// Linux PAL exception ownership machinery (pal.h types). На TARGET_SHARPOS
+// у нас собственный exception path (D13) → skip эти TARGET_UNIX-only stubs.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 void ExInfo::TakeExceptionPointersOwnership(PAL_SEHException* ex)
 {
     _ASSERTE(ex->GetExceptionRecord() == m_ptrs.ExceptionRecord);
@@ -361,7 +368,7 @@ void ExInfo::TakeExceptionPointersOwnership(PAL_SEHException* ex)
     ex->Clear();
     m_fOwnsExceptionPointers = TRUE;
 }
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 void ExInfo::ReleaseResources()
 {
@@ -374,16 +381,19 @@ void ExInfo::ReleaseResources()
         m_hThrowable = NULL;
     }
 
-#ifndef TARGET_UNIX
+// SharpOS port: ни WatsonBucketTracker (TARGET_WINDOWS-only field в exinfo.h:81),
+// ни PAL_FreeExceptionRecords (pal.h). Skip обе ветки полностью — release-resources
+// будет no-op на нашем build.
+#if !defined(TARGET_UNIX)
     // Clear any held Watson Bucketing details
     GetWatsonBucketTracker()->ClearWatsonBucketDetails();
-#else // !TARGET_UNIX
+#elif !defined(TARGET_SHARPOS)
     if (m_fOwnsExceptionPointers)
     {
         PAL_FreeExceptionRecords(m_ptrs.ExceptionRecord, m_ptrs.ContextRecord);
         m_fOwnsExceptionPointers = FALSE;
     }
-#endif // !TARGET_UNIX
+#endif
 }
 
 // static

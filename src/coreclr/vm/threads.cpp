@@ -67,7 +67,9 @@
 #ifndef DACCESS_COMPILE
 Thread* GetThreadAsyncSafe()
 {
-#if defined(TARGET_UNIX) && !defined(TARGET_WASM)
+// SharpOS port: minipal_get_current_thread_id_no_cache из shared_minipal (POSIX),
+// not available на наш Windows-host build. GetThreadNULLOk works для TLS-based.
+#if defined(TARGET_UNIX) && !defined(TARGET_WASM) && !defined(TARGET_SHARPOS)
     return (Thread*)FindThreadInAsyncSafeMap(minipal_get_current_thread_id_no_cache());
 #else
     return GetThreadNULLOk();
@@ -2166,16 +2168,29 @@ BOOL Thread::CreateNewOSThread(SIZE_T sizeToCommitOrReserve, LPTHREAD_START_ROUT
         return FALSE;
     }
 
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_CreateThread64 = pal.h (libpthread-backed). На TARGET_SHARPOS —
+// use Windows CreateThread (HOST_WINDOWS provides it, pal/sharpos shim для thread
+// dispatch в kernel). Note: ourId is SIZE_T для UNIX path, LPDWORD для Windows —
+// gate covers both signatures cleanly.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     h = ::PAL_CreateThread64(NULL     /*=SECURITY_ATTRIBUTES*/,
-#else
-    h = ::CreateThread(      NULL     /*=SECURITY_ATTRIBUTES*/,
-#endif
                              sizeToCommitOrReserve,
                              start,
                              args,
                              dwCreationFlags,
                              &ourId);
+#else
+    {
+        DWORD windowsThreadId;
+        h = ::CreateThread(      NULL     /*=SECURITY_ATTRIBUTES*/,
+                                 sizeToCommitOrReserve,
+                                 start,
+                                 args,
+                                 dwCreationFlags,
+                                 &windowsThreadId);
+        ourId = windowsThreadId;
+    }
+#endif
 
     if (h == NULL)
         return FALSE;
@@ -4486,7 +4501,7 @@ void Thread::PrepareApartmentAndContext()
     }
     CONTRACTL_END;
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     m_OSThreadId = ::PAL_GetCurrentOSThreadId();
 #else
     m_OSThreadId = ::GetCurrentThreadId();
@@ -6021,7 +6036,7 @@ void * Thread::GetStackLowerBound()
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
 
- #ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
    MEMORY_BASIC_INFORMATION lowerBoundMemInfo;
     SIZE_T dwRes;
 
@@ -6035,9 +6050,9 @@ void * Thread::GetStackLowerBound()
     {
         return NULL;
     }
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
     return PAL_GetStackLimit();
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 }
 
 /*
@@ -6524,7 +6539,9 @@ UINT_PTR Thread::GetStackGuarantee()
     return SIZEOF_DEFAULT_STACK_GUARANTEE;
 }
 
-#ifndef TARGET_UNIX
+/* SharpOS port: HOST_WINDOWS provides VirtualProtect/VirtualQuery; guard page
+ * routines compile and work на kernel build тоже. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 
 //
 // MarkPageAsGuard

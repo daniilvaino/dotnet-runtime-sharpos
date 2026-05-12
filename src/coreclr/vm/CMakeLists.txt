@@ -638,7 +638,18 @@ if(CLR_CMAKE_TARGET_WIN32)
 
 endif(CLR_CMAKE_TARGET_WIN32)
 
-if(CLR_CMAKE_TARGET_WIN32)
+# SharpOS port: rtlfunctions.cpp нужен для InstallEEFunctionTable (Windows .pdata
+# registration via RtlInstallFunctionTableCallback). Используется по всему codeman /
+# EH path. Без него — undefined symbol на link. AMSI / COM / dwreport / eventreporter
+# мы пока не подтягиваем (не нужны для kernel image).
+if(CLR_CMAKE_TARGET_SHARPOS)
+    list(APPEND VM_SOURCES_WKS rtlfunctions.cpp)
+    list(APPEND VM_HEADERS_WKS rtlfunctions.h)
+endif()
+
+# SharpOS port: на HOST_WINDOWS+TARGET_SHARPOS используем MASM .asm файлы (ml64),
+# не GAS .S — `ThePreStub` etc. определены в MASM versions. ABI совместима для x64.
+if(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 
 if(CLR_CMAKE_TARGET_ARCH_AMD64)
     set(VM_SOURCES_WKS_ARCH_ASM
@@ -709,7 +720,7 @@ elseif(CLR_CMAKE_TARGET_ARCH_ARM64)
 endif()
 
     set(ASM_SUFFIX asm)
-else(CLR_CMAKE_TARGET_WIN32)
+else(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 
     if(CLR_CMAKE_TARGET_ARCH_AMD64)
         set(VM_SOURCES_WKS_ARCH_ASM
@@ -797,7 +808,7 @@ else(CLR_CMAKE_TARGET_WIN32)
     endif()
 
     set(ASM_SUFFIX S)
-endif(CLR_CMAKE_TARGET_WIN32)
+endif(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 
 if(CLR_CMAKE_TARGET_ARCH_AMD64)
     set(VM_SOURCES_DAC_AND_WKS_ARCH

@@ -204,7 +204,13 @@ ds_ipc_poll (
 	int32_t result = 1;
 	EP_ASSERT (poll_handles_data_len <= MAXIMUM_WAIT_OBJECTS);
 
+	/* SharpOS port: hoist все variable declarations к top функции — clang-cl LLVM
+	 * 22 crashes ("Remove unreachable blocks from CFG") при компиляции goto-bypass
+	 * variable init pattern (Microsoft-goto extension). */
 	HANDLE handles [MAXIMUM_WAIT_OBJECTS];
+	DWORD wait = WAIT_FAILED;
+	DWORD index = 0;
+	DWORD abandonedIndex = 0;
 	for (size_t i = 0; i < poll_handles_data_len; ++i) {
 		poll_handles_data [i].events = 0; // ignore any input on events.
 		if (poll_handles_data [i].ipc) {
@@ -258,7 +264,6 @@ ds_ipc_poll (
 	}
 
 	// call wait for multiple obj
-	DWORD wait = WAIT_FAILED;
 	DS_ENTER_BLOCKING_PAL_SECTION;
 	wait = WaitForMultipleObjects (
 		(DWORD)poll_handles_data_len,      // count
@@ -282,11 +287,11 @@ ds_ipc_poll (
 	}
 
 	// determine which of the streams signaled
-	DWORD index = wait - WAIT_OBJECT_0;
+	index = wait - WAIT_OBJECT_0;
 	// error check the index
 	if (index < 0 || index > (poll_handles_data_len - 1)) {
 		// check if we abandoned something
-		DWORD abandonedIndex = wait - WAIT_ABANDONED_0;
+		abandonedIndex = wait - WAIT_ABANDONED_0;
 		if (abandonedIndex > 0 || abandonedIndex < (poll_handles_data_len - 1)) {
 			poll_handles_data [abandonedIndex].events = (uint8_t)IPC_POLL_EVENTS_HANGUP;
 			result = -1;

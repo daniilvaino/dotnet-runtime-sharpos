@@ -314,11 +314,16 @@ HCIMPLEND
 //
 //========================================================================
 
-// Using compiler specific thread local storage directives due to linkage issues.
+// SharpOS port: clang-cl rejects редefinition of t_ThreadStatics в одной TU
+// (selectany allows merging across TUs, не within). Header threadstatics.h
+// уже provides extern __declspec(selectany) declaration which serves как
+// definition under MSVC selectany semantics. Skip duplicate в этой cpp.
+#if !defined(TARGET_SHARPOS)
 #ifdef _MSC_VER
 __declspec(selectany)
 #endif // _MSC_VER
 PLATFORM_THREAD_LOCAL ThreadLocalData t_ThreadStatics;
+#endif // !TARGET_SHARPOS
 
 extern "C" void QCALLTYPE GetThreadStaticsByMethodTable(QCall::ByteRefOnStack refHandle, MethodTable* pMT, bool gcStatic)
 {

@@ -13,10 +13,11 @@ EXPORTS
         ; dbgshim.dll depends on g_CLREngineMetrics having an ordinal of 2.
         ; This cannot change, or else CoreCLR debugging will not work.
         ; See clr\src\DLLS\dbgshim\dbgshim.cpp.
-        g_CLREngineMetrics                                  @2 data
+        ; SharpOS port: lld-link wants uppercase DATA keyword (MSVC link.exe accepts both).
+        g_CLREngineMetrics                                  @2 DATA
 
         ; VS depends on CLRJitAttachState having a ordinal of 3. This cannot change.
-        CLRJitAttachState                                   @3 data
+        CLRJitAttachState                                   @3 DATA
 
         ; Unix hosting API
         coreclr_create_delegate

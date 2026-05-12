@@ -5,9 +5,10 @@
 #include "eventpipeadapter.h"
 #include "eventpipeinternal.h"
 
-#ifdef TARGET_UNIX
+// SharpOS port: pal.h не visible на HOST_WINDOWS build (pal/inc/ not on include path).
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 #include "pal.h"
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 #include <minipal/guid.h>
 #include <minipal/time.h>

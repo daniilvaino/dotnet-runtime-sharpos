@@ -4,26 +4,25 @@
 LIBRARY         mscordbi
 
 EXPORTS
-    // COM-instantiation
-    DllGetClassObjectInternal private
+    ; COM-instantiation
+    DllGetClassObjectInternal
 
-    // In-proc (Whidbey-style) creation path from the shim - CDIFV and it's replacement
-    CreateCordbObject private
+    ; In-proc (Whidbey-style) creation path from the shim - CDIFV and it's replacement
+    CreateCordbObject
 
-    // Out-of-proc creation path from the shim - ICLRDebugging
+    ; Out-of-proc creation path from the shim - ICLRDebugging
     OpenVirtualProcessImpl
     OpenVirtualProcessImpl2
 
-    // DEPRECATED - use OpenVirtualProcessImpl
-    OpenVirtualProcess private
+    ; DEPRECATED - use OpenVirtualProcessImpl
+    OpenVirtualProcess
     OpenVirtualProcess2
 
-    CoreCLRCreateCordbObject private
-    CoreCLRCreateCordbObjectEx private
-    CoreCLRCreateCordbObject3 private
+    CoreCLRCreateCordbObject
+    CoreCLRCreateCordbObjectEx
+    CoreCLRCreateCordbObject3
 
 #if defined(FEATURE_DBGIPC_TRANSPORT_DI)
-    DllGetClassObject private
+    DllGetClassObject
 #endif // FEATURE_DBGIPC_TRANSPORT_DI
-
 

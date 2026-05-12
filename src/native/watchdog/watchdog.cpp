@@ -6,12 +6,13 @@
 #include <errno.h>
 #include <signal.h>
 
-#ifdef TARGET_WINDOWS
+// SharpOS port: take Windows path on HOST_WINDOWS — sys/wait.h Linux-only.
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 
 #include <windows.h>
 #include <string>
 
-#else // !TARGET_WINDOWS
+#else // !TARGET_WINDOWS && !TARGET_SHARPOS
 
 #include <chrono>
 #include <sys/wait.h>
@@ -47,7 +48,7 @@ int main(const int argc, const char *argv[])
 
 int run_timed_process(const long timeout_ms, const int proc_argc, const char *proc_argv[])
 {
-#ifdef TARGET_WINDOWS
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
     std::string cmdline(proc_argv[0]);
 
     for (int i = 1; i < proc_argc; i++)
@@ -79,7 +80,7 @@ int run_timed_process(const long timeout_ms, const int proc_argc, const char *pr
     CloseHandle(proc_info.hThread);
     return exit_code;
 
-#else // !TARGET_WINDOWS
+#else // !TARGET_WINDOWS && !TARGET_SHARPOS
 
     const int check_interval_ms = 25;
     int check_count = 0;

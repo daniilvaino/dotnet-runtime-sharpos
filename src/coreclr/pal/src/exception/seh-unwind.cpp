@@ -651,6 +651,14 @@ int g_inject_activation_context_locvar_offset = 0;
 
 BOOL PAL_VirtualUnwind(CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *contextPointers)
 {
+#if defined(TARGET_SHARPOS)
+    // SharpOS Phase 2A boundary (per D13): pal/src/ is not compiled on
+    // TARGET_SHARPOS (pal/sharpos/ replaces it). This branch is a documentary
+    // placeholder marking the virtual-unwind boundary; the real implementation
+    // bridges to Phase 1 .pdata unwinder (OS/src/Boot/EH/StackFrameIterator)
+    // and lives in pal/sharpos/exception/.
+    return FALSE;
+#else
     int st;
     unw_context_t unwContext;
     unw_cursor_t cursor;
@@ -773,6 +781,7 @@ BOOL PAL_VirtualUnwind(CONTEXT *context, KNONVOLATILE_CONTEXT_POINTERS *contextP
         GetContextPointers(&cursor, &unwContext, contextPointers);
     }
     return TRUE;
+#endif // TARGET_SHARPOS
 }
 
 struct ExceptionRecords

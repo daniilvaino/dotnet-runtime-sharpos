@@ -25,7 +25,13 @@ set(GC_SOURCES
   gcbridge.cpp
   handletablecache.cpp)
 
-if(CLR_CMAKE_HOST_UNIX)
+# SharpOS port (per work/PAL/Platform_Bundle FINALIZED): TARGET_SHARPOS = third
+# CoreCLR platform. Selects gc/sharpos/ overlay (routes через SharpOSHost_*)
+# instead of gc/unix/ (POSIX) or gc/windows/ (Win32). Selection by TARGET, not
+# HOST, чтобы avoid hybrid (vm/ через PAL + GC через Win32-direct) cascade.
+if(CLR_CMAKE_TARGET_SHARPOS)
+  add_subdirectory(sharpos)
+elseif(CLR_CMAKE_HOST_UNIX)
   add_subdirectory(unix)
   include(unix/configure.cmake)
 else()
@@ -33,13 +39,15 @@ else()
   set (GC_SOURCES
     ${GC_SOURCES}
     windows/Native.rc)
-endif(CLR_CMAKE_HOST_UNIX)
+endif()
 
 if (CLR_CMAKE_TARGET_ARCH_AMD64)
   add_subdirectory(vxsort)
 endif (CLR_CMAKE_TARGET_ARCH_AMD64)
 
-if (CLR_CMAKE_TARGET_WIN32)
+# SharpOS: skip Windows-specific GC_HEADERS list (includes gcenv.windows.inl).
+# Will provide gcenv.sharpos.inl when needed.
+if (CLR_CMAKE_TARGET_WIN32 AND NOT CLR_CMAKE_TARGET_SHARPOS)
   set(GC_HEADERS
     env/common.h
     env/etmdummy.h
@@ -79,13 +87,16 @@ if (CLR_CMAKE_TARGET_WIN32)
   )
 endif(CLR_CMAKE_TARGET_WIN32)
 
-if(CLR_CMAKE_HOST_WIN32)
+# SharpOS: skip auto-Win32 libs on TARGET_SHARPOS (D11 firewall — pal/sharpos/
+# + gc/sharpos/ должны NOT pull kernel32/advapi32 directly; они идут через
+# SharpOSHost_* shim).
+if(CLR_CMAKE_HOST_WIN32 AND NOT CLR_CMAKE_TARGET_SHARPOS)
   set (GC_LINK_LIBRARIES
     ${STATIC_MT_CRT_LIB}
     ${STATIC_MT_VCRT_LIB}
     kernel32.lib
     advapi32.lib)
-endif(CLR_CMAKE_HOST_WIN32)
+endif()
 
 set (GC_LINK_LIBRARIES
     ${GC_LINK_LIBRARIES}
@@ -103,7 +114,11 @@ list(APPEND GC_SOURCES ${GC_HEADERS})
 
 convert_to_absolute_path(GC_SOURCES ${GC_SOURCES})
 
-if(FEATURE_STANDALONE_GC)
+# SharpOS port: standalone GC DLLs (clrgc.dll / clrgcexp.dll) — shipped separately,
+# не нужны для kernel image. Main coreclr.dll использует embedded GC через cee_wks_mergeable
+# path, не зависит от этих DLLs build-time. Gated off, потому что gc_pal=gc/windows/gcenv.windows.cpp
+# pull'ает advapi32 (LookupPrivilegeValueW etc.) который мы не linkуем.
+if(FEATURE_STANDALONE_GC AND NOT CLR_CMAKE_TARGET_SHARPOS)
   # clrgcexp is build with standalone+regions
   if (CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_AMD64)
     add_library_clr(clrgcexp SHARED ${GC_SOURCES})

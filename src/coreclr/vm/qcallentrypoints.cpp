@@ -482,7 +482,10 @@ static const Entry s_QCall[] =
     DllImportEntry(EventPipeInternal_SignalSession)
     DllImportEntry(EventPipeInternal_WaitForSessionSignal)
 #endif
-#if defined(TARGET_UNIX)
+// SharpOS port: PAL_CreateMutexW / PAL_OpenMutexW — Linux-PAL stubs из pal.h.
+// На TARGET_SHARPOS skip — kernel mutex реализация через pal/sharpos shim
+// или own sync primitives (D5), эти QCalls не required для managed BCL.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     DllImportEntry(CloseHandle)
     DllImportEntry(CreateEventExW)
     DllImportEntry(CreateMutexExW)

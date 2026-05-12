@@ -92,7 +92,8 @@ ULONG32 ContextSizeForFlags(ULONG32 flags)
     else
 #endif // TARGET_X86
     {
-#if !defined(CROSS_COMPILE) && !defined(TARGET_WINDOWS) && (defined(TARGET_AMD64) || defined(TARGET_ARM64))
+// SharpOS port: see dbgtargetcontext.h — T_CONTEXT Win32-shaped, no XStateFeaturesMask.
+#if !defined(CROSS_COMPILE) && !defined(TARGET_WINDOWS) && !defined(TARGET_SHARPOS) && (defined(TARGET_AMD64) || defined(TARGET_ARM64))
         if ((flags & CONTEXT_XSTATE) == CONTEXT_XSTATE)
         {
             return sizeof(T_CONTEXT);

@@ -99,7 +99,8 @@ set(CORECLR_LIBRARIES
     corguids
     utilcode
     v3binder
-    System.Globalization.Native-Static
+    # SharpOS port: ICU-based globalization native lib not built (нет ICU в нашем substrate).
+    $<$<NOT:$<BOOL:${CLR_CMAKE_TARGET_SHARPOS}>>:System.Globalization.Native-Static>
     ${LIB_INTEROP}
     coreclrminipal
     gc_pal
@@ -112,7 +113,9 @@ if(CLR_CMAKE_TARGET_ARCH_AMD64)
     )
 endif(CLR_CMAKE_TARGET_ARCH_AMD64)
 
-if(CLR_CMAKE_TARGET_WIN32)
+if(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
+    # SharpOS port: HOST_WINDOWS provides Win32 import libs (kernel32, etc.);
+    # delayimp.lib has `__delayLoadHelper2` for /DELAYLOAD: entries.
     list(APPEND CORECLR_LIBRARIES
         ${STATIC_MT_CRT_LIB}
         ${STATIC_MT_VCRT_LIB}
@@ -128,12 +131,29 @@ if(CLR_CMAKE_TARGET_WIN32)
         RuntimeObject.lib
         delayimp.lib
     )
-else()
+endif()
+
+# SharpOS port: also need наш own pal/sharpos coreclrpal stub + clang compiler-rt
+# builtins для __atomic_compare_exchange_16 (16-byte CAS).
+if(CLR_CMAKE_TARGET_SHARPOS)
+    list(APPEND CORECLR_LIBRARIES
+        coreclrpal
+    )
+    # Find clang runtime builtins library (matches our clang-cl version).
+    get_filename_component(CLANG_CL_DIR "${CMAKE_C_COMPILER}" DIRECTORY)
+    file(GLOB CLANG_RT_BUILTINS "${CLANG_CL_DIR}/../lib/clang/*/lib/windows/clang_rt.builtins-x86_64.lib")
+    if(CLANG_RT_BUILTINS)
+        list(GET CLANG_RT_BUILTINS 0 CLANG_RT_BUILTINS_LIB)
+        list(APPEND CORECLR_LIBRARIES "${CLANG_RT_BUILTINS_LIB}")
+    endif()
+endif()
+
+if(CLR_CMAKE_HOST_UNIX AND NOT CLR_CMAKE_TARGET_SHARPOS)
     list(APPEND CORECLR_LIBRARIES
         coreclrpal
         mscorrc
     )
-endif(CLR_CMAKE_TARGET_WIN32)
+endif()
 
 if(CLR_CMAKE_TARGET_LINUX)
     list(APPEND CORECLR_LIBRARIES
@@ -158,11 +178,13 @@ if(FEATURE_PERFTRACING)
 endif(FEATURE_PERFTRACING)
 
 if(FEATURE_EVENT_TRACE)
-    if(CLR_CMAKE_HOST_UNIX)
+    # SharpOS port: include dummyprovider's eventprovider lib для FireEtXplat*
+    # stubs (vanilla Windows build uses ETW macros, we use Linux-shape Xplat path).
+    if(CLR_CMAKE_HOST_UNIX OR CLR_CMAKE_TARGET_SHARPOS)
         list(APPEND CORECLR_LIBRARIES
             eventprovider # On Windows this library contains only macros
         )
-    endif(CLR_CMAKE_HOST_UNIX)
+    endif()
 endif(FEATURE_EVENT_TRACE)
 
 if(FEATURE_PERFTRACING)

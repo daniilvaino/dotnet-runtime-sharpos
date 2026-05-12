@@ -5,7 +5,8 @@
 #ifndef TARGET_H_
 #define TARGET_H_
 
-#ifdef TARGET_UNIX_POSSIBLY_SUPPORTED
+/* SharpOS port: JIT uses Windows .pdata unwinder, не Linux CFI (DWARF). */
+#if defined(TARGET_UNIX_POSSIBLY_SUPPORTED) && !defined(TARGET_SHARPOS)
 #define FEATURE_CFI_SUPPORT
 #endif
 

@@ -199,7 +199,10 @@ void ExecutableAllocator::InitLazyPreferredRange(size_t base, size_t size, int r
 
 void ExecutableAllocator::InitPreferredRange()
 {
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_GetExecutableMemoryAllocatorPreferredRange — Linux PAL hint
+// based on /proc/self/maps. На kernel context preferred range устанавливается
+// kernel mm subsystem (D1).
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     void *start, *end;
     PAL_GetExecutableMemoryAllocatorPreferredRange(&start, &end);
     g_preferredRangeMin = (BYTE *)start;

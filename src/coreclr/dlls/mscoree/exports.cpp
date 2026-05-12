@@ -261,7 +261,9 @@ int coreclr_initialize(
         &pinvokeOverride,
         &hostContract);
 
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_InitializeCoreCLR — Linux PAL init (signals, libunwind, etc.).
+// На TARGET_SHARPOS init handled при kernel boot (наш own pal/sharpos/).
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     DWORD error = PAL_InitializeCoreCLR(exePath, g_coreclr_embedded);
     hr = HRESULT_FROM_WIN32(error);
 
@@ -367,7 +369,7 @@ int coreclr_shutdown(
 
     hr = host->Stop();
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     PAL_Shutdown();
 #endif
 
@@ -399,7 +401,7 @@ int coreclr_shutdown_2(
 
     hr = host->Stop();
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     PAL_Shutdown();
 #endif
 

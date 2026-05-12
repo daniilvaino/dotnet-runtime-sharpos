@@ -32,7 +32,10 @@
 #define ESTABLISHER_FRAME_ADDRESS_IS_CALLER_SP
 #endif // TARGET_ARM || TARGET_ARM64 || TARGET_X86 || TARGET_LOONGARCH64 || TARGET_RISCV64
 
-#ifndef TARGET_UNIX
+// SharpOS port: ClrUnwindEx и CallRtlUnwind есть в нашем build (Windows-shape
+// unwinder используется на TARGET_SHARPOS), даже несмотря на TARGET_UNIX
+// preprocessor.
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 void NOINLINE
 ClrUnwindEx(EXCEPTION_RECORD* pExceptionRecord,
                  UINT_PTR          ReturnValue,
@@ -41,7 +44,7 @@ ClrUnwindEx(EXCEPTION_RECORD* pExceptionRecord,
 #ifdef TARGET_X86
 EXTERN_C BOOL CallRtlUnwind(EXCEPTION_REGISTRATION_RECORD *pEstablisherFrame, PVOID callback, EXCEPTION_RECORD *pExceptionRecord, PVOID retval);
 #endif
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 bool IsCallDescrWorkerInternalReturnAddress(PCODE pCode);
 
@@ -145,10 +148,10 @@ void FixContext(PCONTEXT pContextRecord)
 
 MethodDesc * GetUserMethodForILStub(Thread * pThread, UINT_PTR uStubSP, MethodDesc * pILStubMD, Frame ** ppFrameOut);
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 BOOL HandleHardwareException(PAL_SEHException* ex);
 BOOL IsSafeToHandleHardwareException(PCONTEXT contextRecord, PEXCEPTION_RECORD exceptionRecord);
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 static inline void UpdatePerformanceMetrics(CrawlFrame *pcfThisFrame, BOOL bIsRethrownException, BOOL bIsNewException)
 {
@@ -165,13 +168,16 @@ void InitializeExceptionHandling()
 
     CLRAddVectoredHandlers();
 
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_SetHardwareExceptionHandler / PAL_SetGetGcMarkerExceptionCode —
+// Linux PAL hardware-exception trampoline. На TARGET_SHARPOS — own IDT/handler
+// path (Phase 6.2), не используется здесь.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     // Register handler of hardware exceptions like null reference in PAL
     PAL_SetHardwareExceptionHandler(HandleHardwareException, IsSafeToHandleHardwareException);
 
     // Register handler for determining whether the specified IP has code that is a GC marker for GCCover
     PAL_SetGetGcMarkerExceptionCode(GetGcMarkerExceptionCode);
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 }
 
 struct UpdateObjectRefInResumeContextCallbackState
@@ -875,7 +881,10 @@ static void DoEHLog(
 }
 #endif // _DEBUG
 
-#ifdef TARGET_UNIX
+// SharpOS port: entire TARGET_UNIX block (lines ~884–1522) — Linux PAL hardware
+// exception machinery (PAL_SEHException-based, libunwind, PAL_VirtualUnwind).
+// На TARGET_SHARPOS — own IDT/handler path (Phase 6.2). Skip целиком.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 
 //---------------------------------------------------------------------------------------
 //
@@ -1506,7 +1515,7 @@ BOOL HandleHardwareException(PAL_SEHException* ex)
     return FALSE;
 }
 
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 void FirstChanceExceptionNotification()
 {
@@ -1557,7 +1566,10 @@ VOID DECLSPEC_NORETURN DispatchManagedException(OBJECTREF throwable, CONTEXT* pE
 
     ExInfo exInfo(pThread, &newExceptionRecord, pExceptionContext, ExKind::Throw);
 
-#ifdef HOST_WINDOWS
+// SharpOS port: exinfo.h gates m_pLongJmpBuf/m_longJmpReturnValue под
+// #ifdef TARGET_WINDOWS, cpp uses HOST_WINDOWS — vanilla CoreCLR mismatch
+// surfacing here. Match field-declaration gate.
+#ifdef TARGET_WINDOWS
     // On Windows, this enables the possibility to propagate a longjmp across managed frames. Longjmp
     // behaves like a SEH exception, but only runs the second (unwinding) pass.
     // NOTE: This is a best effort purely for backward compatibility with the legacy exception handling.
@@ -1573,7 +1585,7 @@ VOID DECLSPEC_NORETURN DispatchManagedException(OBJECTREF throwable, CONTEXT* pE
         exInfo.m_pLongJmpBuf = (jmp_buf*)pExceptionRecord->ExceptionInformation[0];
         exInfo.m_longJmpReturnValue = (int)pExceptionRecord->ExceptionInformation[1];
     }
-#endif // HOST_WINDOWS
+#endif // TARGET_WINDOWS
 
     if (pThread->IsAbortInitiated () && IsExceptionOfType(kThreadAbortException,&throwable))
     {
@@ -1674,7 +1686,7 @@ VOID DECLSPEC_NORETURN DispatchRethrownManagedException()
     DispatchRethrownManagedException(&exceptionContext);
 }
 
-#ifndef TARGET_UNIX
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 void ClrUnwindEx(EXCEPTION_RECORD* pExceptionRecord, UINT_PTR ReturnValue, UINT_PTR TargetIP, UINT_PTR TargetFrameSp)
 {
     RtlUnwind((PVOID)TargetFrameSp, // TargetFrame
@@ -1685,9 +1697,10 @@ void ClrUnwindEx(EXCEPTION_RECORD* pExceptionRecord, UINT_PTR ReturnValue, UINT_
     // doesn't return
     UNREACHABLE();
 }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
-#if defined(TARGET_WINDOWS) && !defined(TARGET_X86)
+/* SharpOS port: ungate — нужен FixupDispatcherContext для PersonalityRoutines. */
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && !defined(TARGET_X86)
 // This is Windows specific implementation as it is based upon the notion of collided unwind that is specific
 // to Windows 64bit.
 //
@@ -1998,7 +2011,8 @@ void CleanUpForSecondPass(Thread* pThread, bool fIsSO, LPVOID MemoryStackFpForFr
     }
 }
 
-#ifdef TARGET_UNIX
+/* SharpOS port: switch to Windows ветка (CallDescrWorker, UMEntry, etc.). */
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 
 typedef enum
 {
@@ -2143,7 +2157,9 @@ ReverseComUnwindFrameChainHandler(IN     PEXCEPTION_RECORD   pExceptionRecord,
 }
 #endif // FEATURE_COMINTEROP
 
-#if !defined(TARGET_UNIX) && !defined(TARGET_X86)
+/* SharpOS port: FixRedirectContextHandler — Windows-only EH personality routine для
+ * RedirectedHandledJITCase_Stub (MASM). Нужна на TARGET_SHARPOS (HOST_WINDOWS host). */
+#if (!defined(TARGET_UNIX) && !defined(TARGET_X86)) || defined(TARGET_SHARPOS)
 EXTERN_C EXCEPTION_DISPOSITION __cdecl
 FixRedirectContextHandler(
                   IN     PEXCEPTION_RECORD   pExceptionRecord,
@@ -3126,11 +3142,12 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
 
     ExInfo* pExInfo = (PTR_ExInfo)pThread->GetExceptionState()->GetCurrentExceptionTracker();
 
-#ifdef HOST_WINDOWS
+// SharpOS port: m_pLongJmpBuf/m_longJmpReturnValue declared под TARGET_WINDOWS — match.
+#ifdef TARGET_WINDOWS
     jmp_buf* pLongJmpBuf = pExInfo->m_pLongJmpBuf;
     int longJmpReturnValue = pExInfo->m_longJmpReturnValue;
     EXCEPTION_RECORD lastExceptionRecord = *pExInfo->m_ptrs.ExceptionRecord;
-#endif // HOST_WINDOWS
+#endif // TARGET_WINDOWS
 
 #ifdef HOST_UNIX
     Interop::ManagedToNativeExceptionCallback propagateExceptionCallback = pExInfo->m_propagateExceptionCallback;
@@ -3205,7 +3222,7 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
 #endif // HOST_UNIX
         // Throw exception from the caller context
 
-#ifdef HOST_WINDOWS
+#ifdef TARGET_WINDOWS
         if ((pLongJmpBuf == NULL) && !IsComPlusException(&lastExceptionRecord) && MapWin32FaultToCOMPlusException(&lastExceptionRecord) == kSEHException)
         {
 #if defined(HOST_X86)
@@ -3226,9 +3243,9 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
             RtlRestoreContext(pvRegDisplay->pCurrentContext, &exceptionRecord);
 #endif
         }
-#endif // HOST_WINDOWS
+#endif // TARGET_WINDOWS
 
-#ifdef HOST_WINDOWS
+#ifdef TARGET_WINDOWS
         if (pLongJmpBuf != NULL)
         {
             STRESS_LOG2(LF_EH, LL_INFO100, "Resuming propagation of longjmp through native frames at IP=%p, SP=%p\n", GetIP(pvRegDisplay->pCurrentContext), GetSP(pvRegDisplay->pCurrentContext));
@@ -3476,19 +3493,19 @@ CLR_BOOL EHEnumNextWorker(EH_CLAUSE_ENUMERATOR* pEHEnum, RhEHClause* pEHClause, 
             EH_LOG((LL_INFO100, " unknown clause\n"));
             result = FALSE;
         }
-#ifdef HOST_WINDOWS
+#ifdef TARGET_WINDOWS
         // When processing longjmp, only finally clauses are considered.
         if ((pExInfo->m_pLongJmpBuf == NULL) || (flags & COR_ILEXCEPTION_CLAUSE_FINALLY) || (flags & COR_ILEXCEPTION_CLAUSE_FAULT))
-#endif // HOST_WINDOWS
+#endif // TARGET_WINDOWS
         {
             break;
         }
-#ifdef HOST_WINDOWS
+#ifdef TARGET_WINDOWS
         else
         {
             EH_LOG((LL_INFO100, "EHEnumNext: clause skipped due to longjmp processing\n"));
         }
-#endif // HOST_WINDOWS
+#endif // TARGET_WINDOWS
     }
 
     return result;

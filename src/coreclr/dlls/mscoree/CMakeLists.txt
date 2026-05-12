@@ -18,6 +18,16 @@ list(APPEND CLR_SOURCES
 set (DEF_SOURCES
   mscorwks_ntdef.src
 )
+elseif(CLR_CMAKE_TARGET_SHARPOS)
+# SharpOS port: HOST_WINDOWS + lld-link требует MSVC-style .def (EXPORTS keyword),
+# не Unix flat symbol list. CLR_CMAKE_TARGET_WIN32 у нас не set (skipped в
+# configureplatform.cmake для SHARPOS), но linker всё равно Windows-style.
+list(APPEND CLR_SOURCES
+    ${CLR_SRC_NATIVE_DIR}/libs/Common/delayloadhook_windows.cpp
+)
+set (DEF_SOURCES
+  mscorwks_ntdef.src
+)
 else()
 set (DEF_SOURCES
   mscorwks_unixexports.src

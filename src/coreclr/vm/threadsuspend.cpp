@@ -2524,7 +2524,9 @@ void RedirectedThreadFrame::ExceptionUnwind_Impl()
     }
 }
 
-#ifndef TARGET_UNIX
+/* SharpOS port: ungate Thread::RedirectedHandledJITCase* helpers + InstallEEFunctionTable
+ * — referenced by ungated paths и MASM RedirectedHandledJITCase.asm. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 
 #ifdef TARGET_X86
 
@@ -3200,7 +3202,7 @@ BOOL Thread::CheckForAndDoRedirectForGCStress (CONTEXT *pCurrentThreadCtx)
 }
 #endif // HAVE_GCCOVER && USE_REDIRECT_FOR_GCSTRESS
 
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 #endif // FEATURE_HIJACK
 
 
@@ -4918,7 +4920,11 @@ static bool GetReturnAddressHijackInfo(EECodeInfo *pCodeInfo X86_ARG(ReturnKind 
     return true;
 }
 
-#ifndef TARGET_UNIX
+// SharpOS port: открываем Windows-side hijack/HandledJITCase block (TARGET_UNIX
+// gate был слишком широкий — содержит ThreadCaughtInKernelModeExceptionHandling +
+// GetSafelyRedirectableThreadContext + Thread::HandledJITCase). Все три нужны
+// для FEATURE_HIJACK code path в codeman.cpp + threadsuspend.cpp.
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 
 //
 // The function below, ThreadCaughtInKernelModeExceptionHandling, exists to detect and work around a very subtle
@@ -5947,7 +5953,7 @@ bool Thread::InjectActivation(ActivationReason reason)
             SpecialUserModeApcWithContextFlags);
     _ASSERTE(success);
     return true;
-#elif defined(TARGET_UNIX)
+#elif defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     _ASSERTE((reason == ActivationReason::SuspendForGC) || (reason == ActivationReason::ThreadAbort) || (reason == ActivationReason::SuspendForDebugger));
 
     static ConfigDWORD injectionEnabled;
@@ -5968,6 +5974,9 @@ bool Thread::InjectActivation(ActivationReason reason)
     }
 
     return false;
+#elif defined(TARGET_SHARPOS)
+    // SharpOS port: thread activation injection — Phase 6.2 task (own IPI/APC mechanism).
+    return false;
 #else
 #error Unknown platform.
 #endif // FEATURE_SPECIAL_USER_MODE_APC || TARGET_UNIX
@@ -5979,7 +5988,7 @@ bool Thread::InjectActivation(ActivationReason reason)
 void ThreadSuspend::Initialize()
 {
 #ifdef FEATURE_HIJACK
-#if defined(TARGET_UNIX)
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     ::PAL_SetActivationFunction(HandleSuspensionForInterruptedThread, CheckActivationSafePoint);
 #elif defined(TARGET_WINDOWS)
     if (Thread::AreShadowStacksEnabled())

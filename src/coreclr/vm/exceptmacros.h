@@ -274,7 +274,11 @@ VOID DECLSPEC_NORETURN UnwindAndContinueRethrowHelperAfterCatch(Frame* pEntryFra
 VOID DECLSPEC_NORETURN UnwindAndContinueResumeAfterCatch(TADDR resumeSP, TADDR resumeIP);
 #endif // FEATURE_INTERPRETER
 
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_SEHException — Linux-PAL specific exception type из pal/inc/pal.h,
+// который не виден на HOST_WINDOWS build (pal/inc не в include path). На TARGET_SHARPOS
+// fall through to empty-stubs branch — у нас собственный unwinder, C++ throw exceptions
+// не используются для CLR EH propagation.
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex, bool isHardwareException);
 
 #define INSTALL_MANAGED_EXCEPTION_DISPATCHER_EX     \
@@ -357,7 +361,7 @@ VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex, bool isHar
             throw; \
         }
 
-#else // TARGET_UNIX
+#else // TARGET_UNIX && !TARGET_SHARPOS / TARGET_X86&TARGET_WINDOWS&FEATURE_EH_FUNCLETS
 
 #define INSTALL_MANAGED_EXCEPTION_DISPATCHER
 #define INSTALL_MANAGED_EXCEPTION_DISPATCHER_EX
@@ -367,7 +371,7 @@ VOID DECLSPEC_NORETURN DispatchManagedException(PAL_SEHException& ex, bool isHar
 #define INSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP
 #define UNINSTALL_UNHANDLED_MANAGED_EXCEPTION_TRAP
 
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 // The purpose of the INSTALL_UNWIND_AND_CONTINUE_HANDLER is to translate an exception to a managed
 // exception before it hits managed code.

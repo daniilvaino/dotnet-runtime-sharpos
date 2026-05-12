@@ -939,7 +939,8 @@ def updateclreventsfile(write_xplatheader, target_cpp, runtimeFlavor, is_host_wi
                 Clrallevents.write(('constexpr ' if target_cpp else 'static const ') + 'EVENTPIPE_TRACE_CONTEXT ' + eventpipeProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
 
             if not is_host_windows and not write_xplatheader and not runtimeFlavor.nativeaot:
-                Clrallevents.write('__attribute__((weak)) EVENTPIPE_TRACE_CONTEXT ' + eventpipeProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
+                # SharpOS port: see comment в block ниже (Clrproviders weak emit).
+                Clrallevents.write('#ifdef _MSC_VER\n__declspec(selectany)\n#else\n__attribute__((weak))\n#endif\nEVENTPIPE_TRACE_CONTEXT ' + eventpipeProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
 
         if generatedFileType == "header":
             Clrallevents.write("#endif // __CLR_ETW_ALL_MAIN_H__\n")
@@ -1049,10 +1050,13 @@ typedef struct _EVENT_DESCRIPTOR
                 nbProviders += 1
                 nbKeywords = 0
                 if not is_host_windows and not runtimeFlavor.nativeaot:
+                    # SharpOS port: __attribute__((weak)) on MSVC ABI (clang-cl на Windows host) emits
+                    # COMDAT with associated metadata, causing LNK1227 conflicts when same symbol gets
+                    # different "associated" globals in different TUs. Use __declspec(selectany) on MSVC.
                     eventpipeProviderCtxName = providerSymbol + "_EVENTPIPE_Context"
-                    Clrproviders.write('__attribute__((weak)) EVENTPIPE_TRACE_CONTEXT ' + eventpipeProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
+                    Clrproviders.write('#ifdef _MSC_VER\n__declspec(selectany)\n#else\n__attribute__((weak))\n#endif\nEVENTPIPE_TRACE_CONTEXT ' + eventpipeProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
                     lttngProviderCtxName = providerSymbol + "_LTTNG_Context"
-                    Clrproviders.write('__attribute__((weak)) LTTNG_TRACE_CONTEXT ' + lttngProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
+                    Clrproviders.write('#ifdef _MSC_VER\n__declspec(selectany)\n#else\n__attribute__((weak))\n#endif\nLTTNG_TRACE_CONTEXT ' + lttngProviderCtxName + ' = { W("' + providerName + '"), 0, false, 0 };\n')
 
                 Clrproviders.write("// Keywords\n");
                 for keywordNode in providerNode.getElementsByTagName('keyword'):

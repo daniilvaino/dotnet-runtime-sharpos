@@ -441,7 +441,8 @@ HRESULT ReadFromDataTarget(ICorDebugDataTarget* pDataTarget,
     return hr;
 }
 
-#if TARGET_WINDOWS
+// SharpOS port: PE export table resolution applicable также для нашего PE/COFF output.
+#if TARGET_WINDOWS || defined(TARGET_SHARPOS)
 
 extern "C" bool
 TryGetSymbol(ICorDebugDataTarget* dataTarget, uint64_t baseAddress, const char* symbolName, uint64_t* symbolAddress)

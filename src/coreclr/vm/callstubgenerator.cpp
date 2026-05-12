@@ -26,7 +26,9 @@ extern "C" void Store_Stack_Ref();
 
 #ifdef TARGET_AMD64
 
-#ifdef TARGET_WINDOWS
+// SharpOS port: take Windows AMD64 calling-convention call-stub path (HOST_WINDOWS
+// + MASM asm files used). Linux x64 ABI variant uses different register set.
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 extern "C" void Load_RCX();
 extern "C" void Load_RCX_RDX();
 extern "C" void Load_RCX_RDX_R8();
@@ -1060,7 +1062,7 @@ extern "C" void InterpreterStubRetVoid();
 extern "C" void InterpreterStubRetDouble();
 extern "C" void InterpreterStubRetI8();
 
-#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && defined(TARGET_AMD64)
 extern "C" void CallJittedMethodRetBuffRCX(PCODE *routines, int8_t*pArgs, int8_t*pRet, int totalStackSize);
 extern "C" void CallJittedMethodRetBuffRDX(PCODE *routines, int8_t*pArgs, int8_t*pRet, int totalStackSize);
 extern "C" void InterpreterStubRetBuffRCX();
@@ -1122,7 +1124,7 @@ CallStubHeader::InvokeFunctionPtr CallStubGenerator::GetInvokeFunctionPtr(CallSt
             INVOKE_FUNCTION_PTR(CallJittedMethodRetDouble);
         case ReturnTypeI8:
             INVOKE_FUNCTION_PTR(CallJittedMethodRetI8);
-#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && defined(TARGET_AMD64)
         case ReturnTypeBuffArg1:
             INVOKE_FUNCTION_PTR(CallJittedMethodRetBuffRCX);
         case ReturnTypeBuffArg2:
@@ -1187,7 +1189,7 @@ PCODE CallStubGenerator::GetInterpreterReturnTypeHandler(CallStubGenerator::Retu
             RETURN_TYPE_HANDLER(InterpreterStubRetDouble);
         case ReturnTypeI8:
             RETURN_TYPE_HANDLER(InterpreterStubRetI8);
-#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && defined(TARGET_AMD64)
         case ReturnTypeBuffArg1:
             RETURN_TYPE_HANDLER(InterpreterStubRetBuffRCX);
         case ReturnTypeBuffArg2:
@@ -1706,7 +1708,7 @@ CallStubGenerator::ReturnType CallStubGenerator::GetReturnType(ArgIterator *pArg
 {
     if (pArgIt->HasRetBuffArg())
     {
-#if defined(TARGET_WINDOWS) && defined(TARGET_AMD64)
+#if (defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)) && defined(TARGET_AMD64)
         if (pArgIt->HasThis())
         {
             return ReturnTypeBuffArg2;
@@ -1758,7 +1760,8 @@ CallStubGenerator::ReturnType CallStubGenerator::GetReturnType(ArgIterator *pArg
                 break;
             case ELEMENT_TYPE_VALUETYPE:
 #ifdef TARGET_AMD64
-#ifdef TARGET_WINDOWS
+// SharpOS port: Windows AMD64 calling convention path (small POD via RAX).
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
                 // POD structs smaller than 64 bits are returned in rax
                 return ReturnTypeI8;
 #else // TARGET_WINDOWS

@@ -9,18 +9,19 @@ if(CLR_CMAKE_HOST_WIN32)
     add_definitions(-DWIN32_LEAN_AND_MEAN)
     include_directories(../../inc) #needed for warning control
 
-    if(CLR_CMAKE_TARGET_WIN32)
+    if(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
+        # SharpOS port: use Windows named-pipe IPC + DiagnosticServer (HOST_WINDOWS).
         set(DEBUG_PAL_REFEREENCE_DIAGNOSTICSERVER ON)
         set(TWO_WAY_PIPE_SOURCES
             ${EVENTPIPE_PAL_SOURCES}
             win/twowaypipe.cpp
             win/processdescriptor.cpp
         )
-    else(CLR_CMAKE_TARGET_WIN32)
+    else(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
         set(TWO_WAY_PIPE_SOURCES
             dummy/twowaypipe.cpp
         )
-    endif(CLR_CMAKE_TARGET_WIN32)
+    endif(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 endif(CLR_CMAKE_HOST_WIN32)
 
 if(CLR_CMAKE_HOST_UNIX)

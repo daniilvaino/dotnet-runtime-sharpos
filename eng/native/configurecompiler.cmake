@@ -5,7 +5,16 @@ include(${CMAKE_CURRENT_LIST_DIR}/configuretools.cmake)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_STANDARD 11)
+# SharpOS port: MSVC's <exception> и другие STL headers требуют C++17 для
+# inline variables (C7525). Vanilla CoreCLR Windows builds работает с C++11
+# потому что не включает pal.h на Windows target. Наша TARGET_SHARPOS build
+# defines TARGET_UNIX preprocessor → eventprovider_dummy и vm/ files
+# включают pal.h → <new> → <exception> → требуется C++17.
+if (CLR_CMAKE_TARGET_SHARPOS)
+    set(CMAKE_CXX_STANDARD 17)
+else()
+    set(CMAKE_CXX_STANDARD 11)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # We need to set this to Release as there's no way to intercept configuration-specific linker flags
@@ -772,9 +781,42 @@ if(CLR_CMAKE_TARGET_UNIX)
   endif()
 elseif(CLR_CMAKE_TARGET_WASI)
   add_compile_definitions($<$<NOT:$<BOOL:$<TARGET_PROPERTY:IGNORE_DEFAULT_TARGET_OS>>>:TARGET_WASI>)
+elseif(CLR_CMAKE_TARGET_SHARPOS)
+  # SharpOS — production CoreCLR port, PAL-shaped (per sage 2 confirmation):
+  # TARGET_SHARPOS = Unix-shaped в смысле "vm/ goes through PAL", не в
+  # смысле Linux/POSIX substrate. We define TARGET_UNIX preprocessor чтобы
+  # vm/ source code naturally calls pal/* functions which our pal/sharpos/
+  # implements.
+  #
+  # NOT defined: TARGET_LINUX/OSX/etc. — we're not those Unix sub-targets.
+  # NOT defined: TARGET_WINDOWS — would skip PAL pattern entirely.
+  #
+  # Suppressing Unix substrate (libkrb5/OpenSSL/libdl/pthread/libunwind/
+  # systemd) happens through TARGET_SHARPOS branches in cmake-side
+  # (find_library guards) + pal/sharpos/ providing implementations rather
+  # than relying on libc/libunwind.
+  add_compile_definitions($<$<NOT:$<BOOL:$<TARGET_PROPERTY:IGNORE_DEFAULT_TARGET_OS>>>:TARGET_SHARPOS>)
+  add_compile_definitions($<$<NOT:$<BOOL:$<TARGET_PROPERTY:IGNORE_DEFAULT_TARGET_OS>>>:TARGET_UNIX>)
+  # SharpOS port: disable CoreCLR contracts (PAL_TRY DBG_BEGIN expansions
+  # требуют GetClrDebugState/CheckClrDebugState which contract.h declares только
+  # под ENABLE_CONTRACTS_IMPL. На HOST_WINDOWS + TARGET_UNIX combo macro chain
+  # breaks down (palclr.h sets _DEBUG_IMPL но contract.h's ENABLE_CONTRACTS_IMPL
+  # gate расходится). Contracts — debug-only assertion machinery, не критично
+  # для production port. Disable globally на TARGET_SHARPOS.
+  add_compile_definitions(DISABLE_CONTRACTS)
 else(CLR_CMAKE_TARGET_UNIX)
   add_compile_definitions($<$<NOT:$<BOOL:$<TARGET_PROPERTY:IGNORE_DEFAULT_TARGET_OS>>>:TARGET_WINDOWS>)
 endif(CLR_CMAKE_TARGET_UNIX)
+
+# SharpOS port: TARGET_SHARPOS preprocessor добавляется unconditionally когда
+# CLR_CMAKE_TARGET_SHARPOS cmake variable set. На Linux host CLR_CMAKE_TARGET_UNIX
+# тоже true → TARGET_UNIX defined by if-branch above; here мы добавляем
+# TARGET_SHARPOS on top. На Windows host (только TARGET_SHARPOS, не TARGET_UNIX)
+# elseif above добавляет оба TARGET_SHARPOS + TARGET_UNIX. Этот block guarantees
+# TARGET_SHARPOS visibility regardless of host platform.
+if(CLR_CMAKE_TARGET_SHARPOS)
+  add_compile_definitions($<$<NOT:$<BOOL:$<TARGET_PROPERTY:IGNORE_DEFAULT_TARGET_OS>>>:TARGET_SHARPOS>)
+endif()
 
 if(CLR_CMAKE_HOST_UNIX_ARM)
    if (NOT DEFINED CLR_ARM_FPU_TYPE)
@@ -821,7 +863,25 @@ if (MSVC)
   # set default warning level to 4 but allow targets to override it.
   set_property(GLOBAL PROPERTY MSVC_WARNING_LEVEL 4)
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/W$<TARGET_PROPERTY:MSVC_WARNING_LEVEL>>)
-  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/WX>) # treat warnings as errors
+  # SharpOS port: skip /WX (warnings-as-errors) когда target SHARPOS — clang's
+  # warning set differs from MSVC's (stricter -Wsign-compare, -Wformat, etc.)
+  # фит fighting каждый через -Wno-error=* не масштабируется. Warnings всё
+  # ещё visible в output, но не fatal. CoreCLR's vanilla MSVC builds keep /WX.
+  if (NOT CLR_CMAKE_TARGET_SHARPOS)
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/WX>) # treat warnings as errors
+  else()
+    # SharpOS port: clang-cl treats -Wc++11-narrowing as default-error.
+    # CoreCLR has many enum case statements с negative literals (CV_HCONV_*,
+    # E_* HRESULTs) narrowed to ULONG32. Vanilla MSVC accepts silently.
+    # -Wno-error не reverts default-errors → explicit disable.
+    # Scope C/CXX only — ml64 (MASM assembler) chokes on `-W` ("invalid
+    # numerical command-line argument : /W", expects /W<digit>).
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-Wno-c++11-narrowing>)
+    # SharpOS port: CoreCLR uses MSVC vtable-name token pasting в vptr_list macros
+    # (DEFINE_ALTERNATENAME с `??_7 ## type ## @@6B@`). MSVC cl.exe accepts это
+    # silently, clang-cl treats как error (`@` chars не valid в C++ identifier).
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:-Wno-invalid-token-paste>)
+  endif()
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/Oi>) # enable intrinsics
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/Oy->) # disable suppressing of the creation of frame pointers on the call stack for quicker function calls
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/Gm->) # disable minimal rebuild

@@ -3908,7 +3908,10 @@ bool GenerateDump(
     LPSTR errorMessageBuffer,
     INT cbErrorMessageBuffer)
 {
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_GenerateCoreDump из pal.h, not visible на HOST_WINDOWS build.
+// Crash dumps в kernel context не делает sense → fall through to else branch
+// (GenerateCrashDump is Windows-side, OK для compile).
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
     MAKE_UTF8PTR_FROMWIDE_NOTHROW (dumpNameUtf8, dumpName);
     if (dumpNameUtf8 == nullptr)
     {
@@ -3918,9 +3921,9 @@ bool GenerateDump(
     {
         return PAL_GenerateCoreDump(dumpNameUtf8, dumpType, flags, errorMessageBuffer, cbErrorMessageBuffer);
     }
-#else // TARGET_UNIX
+#else // TARGET_UNIX && !TARGET_SHARPOS
     return GenerateCrashDump(dumpName, dumpType, flags & GenerateDumpFlagsLoggingEnabled);
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 }
 
 //************************************************************************************
@@ -11424,16 +11427,20 @@ void SoftwareExceptionFrame::Init()
     ENUM_CALLEE_SAVED_REGISTERS();
 #undef CALLEE_SAVED_REGISTER
 
-#ifndef TARGET_UNIX
+// SharpOS port: PAL_VirtualUnwind requires libunwind PAL implementation
+// (pal/src/exception/seh-unwind.cpp). На TARGET_SHARPOS — naш unwinder через
+// .pdata (D13), не libunwind. Use Windows-side Thread::VirtualUnwindCallFrame
+// (RtlVirtualUnwind-based) — naturally compatible с PE/COFF .pdata формат.
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
     Thread::VirtualUnwindCallFrame(&m_Context, &m_ContextPointers);
-#else // !TARGET_UNIX
+#else // !TARGET_UNIX || TARGET_SHARPOS
     BOOL success = PAL_VirtualUnwind(&m_Context, &m_ContextPointers);
     if (!success)
     {
         _ASSERTE(!"SoftwareExceptionFrame::Init failed");
         EEPOLICY_HANDLE_FATAL_ERROR(COR_E_EXECUTIONENGINE);
     }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
 #define CALLEE_SAVED_REGISTER(regname) if (m_ContextPointers.regname == NULL) m_ContextPointers.regname = &m_Context.regname;
     ENUM_CALLEE_SAVED_REGISTERS();

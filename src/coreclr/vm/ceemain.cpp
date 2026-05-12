@@ -384,7 +384,10 @@ static BOOL WINAPI DbgCtrlCHandler(DWORD dwCtrlType)
 // A host can specify that it only wants one version of hosting interface to be used.
 BOOL g_singleVersionHosting;
 
-#ifdef TARGET_WINDOWS
+// SharpOS port: HOST_WINDOWS predicates ниже expects этот block defined.
+// На TARGET_SHARPOS HOST_WINDOWS == true, и Windows API GetModuleHandle/GetProcAddress
+// доступны через pal/sharpos shim.
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 typedef BOOL(WINAPI* PINITIALIZECONTEXT2)(PVOID Buffer, DWORD ContextFlags, PCONTEXT* Context, PDWORD ContextLength, ULONG64 XStateCompactionMask);
 PINITIALIZECONTEXT2 g_pfnInitializeContext2 = NULL;
 
@@ -430,7 +433,7 @@ void InitializeOptionalWindowsAPIPointers()
     g_pfnRtlRestoreContext = (PRTLRESTORECONTEXT)GetProcAddress(hm, "RtlRestoreContext");
 #endif //TARGET_X86
 }
-#endif // TARGET_WINDOWS
+#endif // TARGET_WINDOWS || TARGET_SHARPOS
 
 void InitializeStartupFlags()
 {
@@ -675,7 +678,7 @@ void EEStartupHelper()
         OnStackReplacementManager::StaticInitialize();
         MethodTable::InitMethodDataCache();
 
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
         ExecutableAllocator::InitPreferredRange();
 #else
         {
@@ -686,7 +689,7 @@ void EEStartupHelper()
             g_runtimeVirtualSize = (SIZE_T)pe.GetVirtualSize();
             ExecutableAllocator::InitLazyPreferredRange(g_runtimeLoadedBaseAddress, g_runtimeVirtualSize, GetRandomInt(64));
         }
-#endif // !TARGET_UNIX
+#endif // !TARGET_UNIX || TARGET_SHARPOS
 
         InitThreadManager();
         STRESS_LOG0(LF_STARTUP, LL_ALWAYS, "Returned successfully from InitThreadManager");
@@ -699,9 +702,10 @@ void EEStartupHelper()
 #endif // TARGET_LINUX
 #endif // FEATURE_PERFTRACING
 
-#ifdef TARGET_UNIX
+// SharpOS port: PAL_SetShutdownCallback — Linux PAL shutdown hook (atexit-based).
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
         PAL_SetShutdownCallback(EESocketCleanupHelper);
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 
 #ifdef STRESS_LOG
         if (CLRConfig::GetConfigValue(CLRConfig::UNSUPPORTED_StressLog, g_pConfig->StressLog()) != 0) {
@@ -931,7 +935,10 @@ void EEStartupHelper()
 
         // on wasm we need to run finalizers on main thread as we are single threaded
         // active issue: https://github.com/dotnet/runtime/issues/114096
-#if !defined(TARGET_WINDOWS) && !defined(TARGET_WASM)
+        // SharpOS Phase 6.1: no threading yet (per D5), finalizer thread creation
+        // deferred to Phase 6.2 after scheduler. EnableFinalization keeps queue alive
+        // so finalize semantics exist even if no separate thread.
+#if !defined(TARGET_WINDOWS) && !defined(TARGET_WASM) && !defined(TARGET_SHARPOS)
         // This isn't done as part of InitializeGarbageCollector() above because
         // debugger must be initialized before creating EE thread objects
         FinalizerThread::FinalizerThreadCreate();

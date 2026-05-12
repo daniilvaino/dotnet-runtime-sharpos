@@ -120,11 +120,16 @@ def generateDummyFiles(etwmanifest, out_dirname, runtimeFlavor, extern, dryRun):
                 impl.write(stdprolog_cpp + "\n")
 
                 impl.write("""
-#ifdef TARGET_UNIX
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 #include "pal_mstypes.h"
 #include "pal_error.h"
 #include "pal.h"
 #include "pal/stackstring.hpp"
+#elif defined(TARGET_SHARPOS)
+/* SharpOS port: HOST_WINDOWS windows.h provides BOOL/ULONG/ERROR_SUCCESS;
+ * stdint.h provides uint64_t. */
+#include <windows.h>
+#include <stdint.h>
 #endif
 
 

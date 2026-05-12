@@ -435,7 +435,8 @@ ASMCONSTANTS_C_ASSERT(OFFSETOF__FaultingExceptionFrame__m_SSP
 ASMCONSTANTS_C_ASSERT(OFFSETOF__PtrArray__m_NumComponents
                     == offsetof(PtrArray, m_NumComponents));
 
-#ifndef TARGET_UNIX
+/* SharpOS port: TEB available на HOST_WINDOWS — TLS pointer offset same. */
+#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
 #define OFFSET__TEB__ThreadLocalStoragePointer 0x58
 ASMCONSTANTS_C_ASSERT(OFFSET__TEB__ThreadLocalStoragePointer == offsetof(TEB, ThreadLocalStoragePointer));
 #endif
@@ -572,11 +573,15 @@ ASMCONSTANTS_C_ASSERT(OFFSETOF__ThreadLocalInfo__m_pThread == offsetof(ThreadLoc
 #endif
 ASMCONSTANTS_C_ASSERT(OFFSETOF__InterpMethod__pCallStub == offsetof(InterpMethod, pCallStub))
 
-#ifdef TARGET_UNIX
+/* SharpOS port: hybrid Thread layout (some Windows fields ungated, но не все)
+ * gives unique offset 0xb50 = 2896. */
+#if defined(TARGET_SHARPOS)
+#define OFFSETOF__Thread__m_pInterpThreadContext 0xb50
+#elif defined(TARGET_UNIX)
 #define OFFSETOF__Thread__m_pInterpThreadContext 0xb48
-#else // TARGET_UNIX
+#else
 #define OFFSETOF__Thread__m_pInterpThreadContext 0xba0
-#endif // TARGET_UNIX
+#endif
 ASMCONSTANTS_C_ASSERT(OFFSETOF__Thread__m_pInterpThreadContext == offsetof(Thread, m_pInterpThreadContext))
 
 #define OFFSETOF__InterpThreadContext__pStackPointer 0x10
@@ -585,11 +590,12 @@ ASMCONSTANTS_C_ASSERT(OFFSETOF__InterpThreadContext__pStackPointer == offsetof(I
 #define OFFSETOF__CallStubHeader__Routines 0x10
 ASMCONSTANTS_C_ASSERT(OFFSETOF__CallStubHeader__Routines == offsetof(CallStubHeader, Routines))
 
-#ifdef TARGET_UNIX
+/* SharpOS port: TransitionBlock 0x48 на TARGET_SHARPOS (UNIX_AMD64_ABI not set, no m_argumentRegisters). */
+#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
 #define SIZEOF__TransitionBlock 0x68
-#else // TARGET_UNIX
+#else // TARGET_UNIX && !TARGET_SHARPOS
 #define SIZEOF__TransitionBlock 0x48
-#endif // TARGET_UNIX
+#endif // TARGET_UNIX && !TARGET_SHARPOS
 ASMCONSTANTS_C_ASSERT(SIZEOF__TransitionBlock == sizeof(TransitionBlock))
 
 #endif // FEATURE_INTERPRETER

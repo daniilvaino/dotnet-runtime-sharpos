@@ -26,7 +26,8 @@
 #define ENABLE_PERFTRACING
 #endif
 
-#ifdef TARGET_WINDOWS
+/* SharpOS port: HOST_WIN32 нужен для named-pipe IPC PAL (на HOST_WINDOWS). */
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 #define HOST_WIN32
 #endif
 
@@ -53,7 +54,8 @@
 #define ENABLE_PERFTRACING
 #endif
 
-#ifdef TARGET_WINDOWS
+/* SharpOS port: HOST_WIN32 нужен для named-pipe IPC PAL (на HOST_WINDOWS). */
+#if defined(TARGET_WINDOWS) || defined(TARGET_SHARPOS)
 #define HOST_WIN32
 #endif
 

@@ -190,6 +190,14 @@ inline void * operator new[](size_t lenBytes, const forDbiWorker &)
     return result;
 }
 
+// SharpOS port: clang-cl emits paired placement-delete для cleanup в случае throw
+// в array ctor (см. dacdbistructures.inl:103 `new(forDbi) T[n]`). MSVC cl.exe не
+// emits такой delete reference. Inline definition matches operator new[] above.
+inline void operator delete[](void *p, const forDbiWorker &)
+{
+    delete[] (BYTE*)p;
+}
+
 // Helper to delete memory used with the IDacDbiInterface::IAllocator  interface.
 template<class T> inline
 void DeleteDbiMemory(T *p)
