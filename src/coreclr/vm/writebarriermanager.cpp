@@ -572,8 +572,13 @@ int WriteBarrierManager::UpdateWriteWatchAndCardTableLocations(bool isRuntimeSus
     {
         case WRITE_BARRIER_BYTE_REGIONS64:
         case WRITE_BARRIER_BIT_REGIONS64:
+#ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+        // SharpOS port: case labels reference enum values that only exist under
+        // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP; upstream missed the gate here
+        // (other sites in this file gate correctly). Phase 6.1 disables SWW.
         case WRITE_BARRIER_WRITE_WATCH_BYTE_REGIONS64:
         case WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64:
+#endif
             stompWBCompleteActions |= updateVariable<UINT64>(m_pRegionToGenTableImmediate, (size_t)g_region_to_generation_table);
             stompWBCompleteActions |= updateVariable<UINT8>(m_pRegionShrDest, (size_t)g_region_shr);
             stompWBCompleteActions |= updateVariable<UINT8>(m_pRegionShrSrc, (size_t)g_region_shr);

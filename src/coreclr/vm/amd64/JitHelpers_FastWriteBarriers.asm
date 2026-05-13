@@ -195,6 +195,10 @@ endif
         ret
 LEAF_END_MARKED JIT_WriteBarrier_SVR64, _TEXT
 
+endif ; FEATURE_SVR_GC -- SharpOS: Region64 barriers below are Regions-mode (Workstation+Server),
+      ; не SVR-specific. Upstream mistakenly wrapped them inside FEATURE_SVR_GC gate.
+      ; С Workstation-only profile (Phase 6.1) они нужны на link.
+
 LEAF_ENTRY JIT_WriteBarrier_Byte_Region64, _TEXT
         align 8
 
@@ -340,8 +344,6 @@ PATCH_LABEL JIT_WriteBarrier_Bit_Region64_Patch_Label_CardBundleTable
 endif
         ret
 LEAF_END_MARKED JIT_WriteBarrier_Bit_Region64, _TEXT
-
-endif
 
 
 ifdef FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP

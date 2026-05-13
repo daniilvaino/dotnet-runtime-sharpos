@@ -7197,7 +7197,10 @@ HRESULT DacDbiInterfaceImpl::AreOptimizationsDisabled(VMPTR_Module vmModule, mdM
         *pOptimizationsDisabled = activeILVersion.IsDeoptimized();
     }
 #else
-    pOptimizationsDisabled->SetDacTargetPtr(0);
+    // SharpOS port: pre-existing CoreCLR bug в #else branch — pOptimizationsDisabled
+    // это BOOL*, не VMPTR<T>. С enabled FEATURE_REJIT (upstream default) этот код
+    // unreachable. Fix к correct API.
+    *pOptimizationsDisabled = FALSE;
 #endif
 
     return S_OK;

@@ -49,7 +49,13 @@ if(NOT DEFINED FEATURE_INTERPRETER)
 endif(NOT DEFINED FEATURE_INTERPRETER)
 
 if(NOT DEFINED FEATURE_STANDALONE_GC)
-  set(FEATURE_STANDALONE_GC 1)
+  # SharpOS Phase 6.1: embedded GC only via cee_wks_mergeable path.
+  # Standalone GC DLLs (clrgc.dll/clrgcexp.dll) shipped separately, not needed.
+  if(CLR_CMAKE_TARGET_SHARPOS)
+    set(FEATURE_STANDALONE_GC 0)
+  else()
+    set(FEATURE_STANDALONE_GC 1)
+  endif()
 endif(NOT DEFINED FEATURE_STANDALONE_GC)
 
 if(NOT DEFINED FEATURE_AUTO_TRACE)
