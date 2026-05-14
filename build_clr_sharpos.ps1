@@ -13,12 +13,21 @@
 #
 # Usage:
 #   .\build_clr_sharpos.ps1            # incremental build
+#   .\build_clr_sharpos.ps1 -NinjaClean # delete .ninja_deps only (fast unstick — see note)
 #   .\build_clr_sharpos.ps1 -Clean     # full clean rebuild (deletes obj/)
 #   .\build_clr_sharpos.ps1 -Configuration Release
+#
+# -NinjaClean note: clang-cl outputs `Note: including file:` lines that
+# corrupt ninja's depfile parser between incremental builds, surfacing as
+# `ninja: error: FindFirstFileExA(Note: including file: ...)` and an
+# immediate abort. Deleting `.ninja_deps` forces ninja to rebuild the deps
+# database in-place — ~30 sec vs ~2 min for full -Clean. Reuse this whenever
+# you see that error before reaching for -Clean.
 
 [CmdletBinding()]
 param(
     [switch]$Clean,
+    [switch]$NinjaClean,
     [string]$Configuration = 'Debug'
 )
 
@@ -53,6 +62,15 @@ Write-Host "Log: $LogFile"
 if ($Clean -and (Test-Path $ObjDir)) {
     Write-Host "Cleaning $ObjDir ..." -ForegroundColor Yellow
     Remove-Item $ObjDir -Recurse -Force
+}
+elseif ($NinjaClean) {
+    $NinjaDeps = Join-Path $ObjDir '.ninja_deps'
+    if (Test-Path $NinjaDeps) {
+        Write-Host "Removing $NinjaDeps (ninja depfile reset) ..." -ForegroundColor Yellow
+        Remove-Item $NinjaDeps -Force
+    } else {
+        Write-Host "No .ninja_deps to remove (fresh build state)." -ForegroundColor DarkGray
+    }
 }
 
 # Environment setup для CMake compiler detection.

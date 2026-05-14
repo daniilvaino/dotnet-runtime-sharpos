@@ -55,6 +55,93 @@ void RemoveThreadFromAsyncSafeMap(uint64_t, void*)
 }
 
 // ---------------------------------------------------------------------------
+// CRT heap forwarders — per D9 (memory forward to SharpOSHost) + 3-tier
+// architecture. CoreCLR's libcmtd/ucrt malloc family is unresolved
+// (api-ms-win-crt-heap-l1-1-0.dll not loaded under UEFI). We replace
+// with thin forwarders to SharpOSHost C-ABI exports — host owns the
+// real kernel heap.
+//
+// Real implementations live в OS/src/PAL/SharpOSHost/CrtHeapStubs.cs
+// (C# [RuntimeExport]). For kernel link they override fork-side
+// fallbacks via /FORCE:MULTIPLE.
+//
+// Fork build also produces coreclr.dll (host-Windows smoke target) from
+// the same .obj files. That link path lacks the C# host, so we provide
+// these fallbacks returning nullptr — they keep the DLL linkable but
+// are unreachable at smoke runtime (no allocation paths exercised).
+// ---------------------------------------------------------------------------
+
+extern "C" void* SharpOSHost_HeapAlloc(size_t /*size*/)        { return nullptr; }
+extern "C" void  SharpOSHost_HeapFree(void* /*ptr*/)            { }
+extern "C" void* SharpOSHost_HeapRealloc(void* /*old*/, size_t /*size*/) { return nullptr; }
+extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/) {}
+extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) {}
+
+// Per-call trace: prints (caller, caller-of-caller, size). For malloc
+// the immediate caller is libcmtd's operator new (always the same address);
+// caller-of-caller is the CoreCLR site that did `new T()`.
+static inline void trace_call_2(const char* fn, uint64_t caller, uint64_t caller2, uint64_t arg1)
+{
+    SharpOSHost_DebugPrint("[crt] ");
+    SharpOSHost_DebugPrint(fn);
+    SharpOSHost_DebugPrint("(0x");
+    SharpOSHost_DebugPrintHex(arg1);
+    SharpOSHost_DebugPrint(") c1=0x");
+    SharpOSHost_DebugPrintHex(caller);
+    SharpOSHost_DebugPrint(" c2=0x");
+    SharpOSHost_DebugPrintHex(caller2);
+    SharpOSHost_DebugPrint("\n");
+}
+
+extern "C" void* malloc(size_t size)
+{
+    trace_call_2("malloc",
+        (uint64_t)__builtin_return_address(0),
+        (uint64_t)__builtin_return_address(1),
+        size);
+    return SharpOSHost_HeapAlloc(size);
+}
+extern "C" void  free(void* p)
+{
+    trace_call_2("free",
+        (uint64_t)__builtin_return_address(0),
+        (uint64_t)__builtin_return_address(1),
+        (uint64_t)p);
+    SharpOSHost_HeapFree(p);
+}
+extern "C" void* realloc(void* old, size_t s)
+{
+    trace_call_2("realloc",
+        (uint64_t)__builtin_return_address(0),
+        (uint64_t)__builtin_return_address(1),
+        s);
+    return SharpOSHost_HeapRealloc(old, s);
+}
+extern "C" void* calloc(size_t n, size_t sz)
+{
+    size_t total = n * sz;
+    trace_call_2("calloc",
+        (uint64_t)__builtin_return_address(0),
+        (uint64_t)__builtin_return_address(1),
+        total);
+    void* p = SharpOSHost_HeapAlloc(total);
+    if (p) {
+        char* c = (char*)p;
+        for (size_t i = 0; i < total; i++) c[i] = 0;
+    }
+    return p;
+}
+
+// __imp_<name> data symbols — IAT thunks override. CoreCLR code emitted
+// `call qword ptr [__imp_malloc]` for dllimport-declared CRT functions.
+// We provide __imp_<name> as a data pointer to our function; /FORCE:MULTIPLE
+// picks ours over ucrt.lib's IAT thunk (which points to unloaded DLL).
+extern "C" void* (*__imp_malloc)(size_t)        = &malloc;
+extern "C" void  (*__imp_free)(void*)            = &free;
+extern "C" void* (*__imp_calloc)(size_t, size_t) = &calloc;
+extern "C" void* (*__imp_realloc)(void*, size_t) = &realloc;
+
+// ---------------------------------------------------------------------------
 // __atomic_compare_exchange_16: clang emits builtin для 16-byte CAS.
 // clang_rt.builtins-x86_64.lib on Windows не provides — implement via
 // MSVC `_InterlockedCompareExchange128` intrinsic (lock cmpxchg16b).

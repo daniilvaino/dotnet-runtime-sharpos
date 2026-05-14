@@ -37,6 +37,16 @@ set(SHARPOS_PAL_SOURCES
 
 add_library(coreclrpal STATIC ${SHARPOS_PAL_SOURCES})
 
+# Separate library для CRT trap stubs — kernel link only. Excluded from
+# coreclr.dll target (where it would collide с libcmtd's _callnewh,
+# _errno, etc.). Kernel link adds this lib via OS.csproj LinkerArg и
+# uses /FORCE:MULTIPLE to win over ucrt.lib's IAT thunks.
+#
+# Phase 6.1.b: UCRT IAT thunks can't resolve under UEFI (no DLL loader).
+# Trap stubs print [CRT trap] <name> and halt — empirical enumeration of
+# which CRT functions coreclr_initialize touches at runtime.
+add_library(coreclrpal_kernel_crt STATIC crt_imp_stubs.cpp)
+
 # Stub targets pal/src/ defines but we don't (yet) implement. Empty
 # placeholders so dependent targets can link/depend on them.
 if(NOT TARGET coreclrpal_dac)

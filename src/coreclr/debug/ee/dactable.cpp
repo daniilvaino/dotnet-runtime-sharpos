@@ -138,6 +138,16 @@ void DacGlobals::InitializeEntries()
 #include "gfunc_list.h"
 #undef DEFINE_DACGFN
 #undef DEFINE_DACGFN_STATIC
+#ifdef TARGET_SHARPOS
+    // SharpOS port: skip VPTR_CLASS cascade. The macro expands to
+    // _alloca(sizeof(name)) + placement new(0) per class — 36 classes
+    // including 24KB EEJitManager → ~150KB cumulative stack growth
+    // → stack overflow → canary fail → ud2 в InitializeEntries epilogue.
+    //
+    // DAC vtable addresses (<class>__vtAddr static globals) stay zero.
+    // Runtime doesn't depend on them — only mscordaccore reads these
+    // for debugger introspection, which we don't run from kernel.
+#else
 #define VPTR_CLASS(name) \
     { \
         void *pBuf = _alloca(sizeof(name)); \
@@ -146,6 +156,7 @@ void DacGlobals::InitializeEntries()
     }
 #include <vptr_list.h>
 #undef VPTR_CLASS
+#endif // TARGET_SHARPOS
 }
 
 void DacGlobals::Initialize()
