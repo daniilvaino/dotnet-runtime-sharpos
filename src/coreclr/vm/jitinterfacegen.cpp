@@ -28,7 +28,21 @@ void InitJITAllocationHelpers()
         // if (multi-proc || server GC || non-Windows)
         if (GCHeapUtilities::UseThreadAllocationContexts())
         {
+#if !defined(TARGET_SHARPOS)
+            // SharpOS de-collide (plan point 6): the kernel image exports
+            // RhpNewFast / RhNewString as [RuntimeExport] symbols backed by
+            // the kernel mark-sweep GcHeap (Heap A). Installing CoreCLR's
+            // fast helpers under those SAME names makes the linker bind
+            // hosted `newobj` / string allocation to the KERNEL allocator →
+            // every hosted reference object lands outside the CoreCLR GC
+            // window (Heap A), invisible to its GC (root cause of the [VH]
+            // / AppContext.s_dataStore-in-Heap-A bug). The collision-free
+            // CoreCLR defaults (RhpNew / framed string) route through
+            // Alloc→gc_heap→VM window correctly, so on SharpOS we keep them.
+            // RhpNewArrayFast does NOT collide (kernel exports RhpNewArray,
+            // not RhpNewArrayFast) and is already correct, so it stays.
             SetJitHelperFunction(CORINFO_HELP_NEWSFAST, RhpNewFast);
+#endif
             SetJitHelperFunction(CORINFO_HELP_NEWARR_1_VC, RhpNewArrayFast);
             SetJitHelperFunction(CORINFO_HELP_NEWARR_1_PTR, RhpNewPtrArrayFast);
 
@@ -38,7 +52,12 @@ void InitJITAllocationHelpers()
             SetJitHelperFunction(CORINFO_HELP_NEWARR_1_ALIGN8, RhpNewArrayFastAlign8);
 #endif
 
+#if !defined(TARGET_SHARPOS)
+            // See de-collide note above: RhNewString collides with the
+            // kernel [RuntimeExport]. Keep CoreCLR's default framed string
+            // allocator on SharpOS so strings go to the VM window too.
             ECall::DynamicallyAssignFCallImpl(GetEEFuncEntryPoint(RhNewString), ECall::FastAllocateString);
+#endif
         }
         else
         {

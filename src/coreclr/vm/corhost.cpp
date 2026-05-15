@@ -44,6 +44,12 @@
 
 extern void STDMETHODCALLTYPE EEShutDown(BOOL fIsDllUnloading);
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// SharpOS twin-test diag: print real AppContext.s_dataStore address.
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
+
 //***************************************************************************
 
 // *** ICorRuntimeHost methods ***
@@ -579,6 +585,22 @@ HRESULT CorHost2::CreateAppDomainWithManager(
         args[2] = PtrToArgSlot(nProperties);
 
         setup.Call(args);
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // Twin test: print the address of the REAL AppContext.s_dataStore
+        // straight after Setup populated it. Compare with the [VH] object
+        // (0x37E5B40). Same  → that instance really is in kernel Heap A
+        // (early-alloc / bootstrap bug). Different → the [VH] object is a
+        // TWIN/orphan; the live s_dataStore is elsewhere (Heap B) and we
+        // were chasing a ghost.
+        {
+            FieldDesc* pFD = CoreLibBinder::GetField(FIELD__APPCONTEXT__S_DATA_STORE);
+            OBJECTREF ds = pFD->GetStaticOBJECTREF();
+            SharpOSHost_DebugPrint("[s_dataStore@] 0x");
+            SharpOSHost_DebugPrintHex((uint64_t)OBJECTREFToObject(ds));
+            SharpOSHost_DebugPrint("\n");
+        }
+#endif
     }
 
     LPCWSTR pwzNativeDllSearchDirectories = NULL;

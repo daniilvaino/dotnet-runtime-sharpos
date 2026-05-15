@@ -24,6 +24,13 @@ extern "C" void __fastcall ZeroMemoryInGCHeap(void*, size_t);
 
 void ErectWriteBarrierForMT(MethodTable **dst, MethodTable *ref);
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// SharpOS port: see Object::RawSetMethodTable. Catches a MethodTable being
+// stamped onto an object outside the GC window (managed object built in the
+// native/kernel arena) and logs the allocator's return address. Throttled.
+extern "C" void SharpOS_OnObjMTStamp(void* obj, void* mt);
+#endif
+
 /*
  #ObjectModel
  * CLR Internal Object Model
@@ -146,6 +153,15 @@ class Object
     void RawSetMethodTable(MethodTable *pMT)
     {
         LIMITED_METHOD_CONTRACT;
+#if defined(TARGET_SHARPOS)
+        // SharpOS port: out-of-line tripwire (defined in object.cpp where the
+        // GC range globals + _ReturnAddress are in scope). Fires only for the
+        // rare case of a MT being stamped onto an object OUTSIDE the GC window
+        // — a managed object being constructed in the native/kernel arena.
+        // Prints the allocator's return address so we catch the exact creator
+        // path (not just the later [VH] validator). Throttled.
+        SharpOS_OnObjMTStamp((void*)this, (void*)pMT);
+#endif
         m_pMethTab = pMT;
     }
 
@@ -158,6 +174,13 @@ class Object
     VOID SetMethodTableForUOHObject(MethodTable *pMT)
     {
         WRAPPER_NO_CONTRACT;
+#if defined(TARGET_SHARPOS)
+        // SharpOS port: UOH / non-GC / pinned / frozen-heap objects are
+        // stamped here (NOT via RawSetMethodTable). Same native-arena
+        // tripwire — tagged distinctly via the high bit of mt so the print
+        // is recognisable as the UOH path.
+        SharpOS_OnObjMTStamp((void*)this, (void*)((uintptr_t)pMT | 1));
+#endif
         // This function must be used if the allocation occurs on a UOH heap, and the method table might be a collectible type
         ErectWriteBarrierForMT(&m_pMethTab, pMT);
     }

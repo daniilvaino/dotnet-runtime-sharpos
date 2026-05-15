@@ -90,7 +90,7 @@ CRT_STUB(_stricmp)
 CRT_STUB(_time64)
 // _wassert — real impl below (print + continue, not fatal)
 CRT_STUB(_wcsicmp)
-CRT_STUB(_wcstoui64)
+// _wcstoui64 — real impl below (GC config INT parse: HeapHardLimit etc.)
 CRT_STUB(_wfopen)
 // _write — real impl below (POSIX write to fd; surfaces fd 1/2 to console)
 CRT_STUB(acos)
@@ -162,7 +162,7 @@ CRT_STUB(sqrtf)
 CRT_STUB(strtod)
 CRT_STUB(strtok_s)
 CRT_STUB(strtoul)
-CRT_STUB(strtoull)
+// strtoull — real impl below (shared sharpos_str2u64 with _wcstoui64)
 CRT_STUB(tan)
 CRT_STUB(tanf)
 CRT_STUB(tanh)
@@ -736,9 +736,7 @@ static void diag_format(const char* fmt, void* va) {
 // string, not garbage.
 
 extern "C" int __stdio_common_vsprintf(uint64_t /*options*/, char* buffer, size_t bufCount, const char* format, void* /*locale*/, void* args) {
-    SharpOSHost_DebugPrint("[sprintf] ");
-    diag_format(format, args);
-    SharpOSHost_DebugPrint("\n");
+    (void)format; (void)args;   // logging suppressed — too noisy
     if (buffer && bufCount > 0) buffer[0] = 0;
     return 0;
 }
@@ -749,9 +747,7 @@ CRT_REAL(__stdio_common_vsprintf);
 // Логирование подавлено (раньше печатали format string как [sprintf_s] ... —
 // слишком шумно, мозолит глаза в каждом prestub'е).
 extern "C" int __stdio_common_vsprintf_s(uint64_t /*options*/, char* buffer, size_t bufCount, const char* format, void* /*locale*/, void* args) {
-    SharpOSHost_DebugPrint("[sprintf_s] ");
-    diag_format(format, args);
-    SharpOSHost_DebugPrint("\n");
+    (void)format; (void)args;   // logging suppressed — too noisy
     if (buffer && bufCount >= 2) { buffer[0] = '?'; buffer[1] = 0; return 1; }
     if (buffer && bufCount > 0) buffer[0] = 0;
     return 0;
@@ -759,9 +755,7 @@ extern "C" int __stdio_common_vsprintf_s(uint64_t /*options*/, char* buffer, siz
 CRT_REAL(__stdio_common_vsprintf_s);
 
 extern "C" int __stdio_common_vsnprintf_s(uint64_t /*options*/, char* buffer, size_t bufCount, size_t /*maxCount*/, const char* format, void* /*locale*/, void* args) {
-    SharpOSHost_DebugPrint("[snprintf_s] ");
-    diag_format(format, args);
-    SharpOSHost_DebugPrint("\n");
+    (void)format; (void)args;   // logging suppressed — too noisy
     if (buffer && bufCount >= 2) { buffer[0] = '?'; buffer[1] = 0; return 1; }
     if (buffer && bufCount > 0) buffer[0] = 0;
     return 0;
@@ -769,9 +763,7 @@ extern "C" int __stdio_common_vsnprintf_s(uint64_t /*options*/, char* buffer, si
 CRT_REAL(__stdio_common_vsnprintf_s);
 
 extern "C" int __stdio_common_vfprintf(uint64_t /*options*/, void* /*stream*/, const char* format, void* /*locale*/, void* args) {
-    SharpOSHost_DebugPrint("[fprintf] ");
-    diag_format(format, args);
-    SharpOSHost_DebugPrint("\n");
+    (void)format; (void)args;   // logging suppressed — too noisy
     return 0;
 }
 CRT_REAL(__stdio_common_vfprintf);
@@ -889,6 +881,49 @@ extern "C" void _wassert(const wchar_t* msg, const wchar_t* file, unsigned line)
     // Return — caller continues. CoreCLR assertion was logical, not fatal.
 }
 CRT_REAL(_wassert);
+
+// _wcstoui64 / strtoull — real impls. GC config INT knobs (HeapHardLimit,
+// RegionRange, RegionSize) parsed from our coreclr_initialize string props
+// ("0x4000000" etc.) via _wcstoui64. base==0 → autodetect 0x/0/dec; base 16
+// accepts optional 0x. endptr set to first unparsed char (may be NULL).
+namespace {
+template <typename CH>
+unsigned long long sharpos_str2u64(const CH* p, CH** endptr, int base) {
+    if (p == nullptr) { if (endptr) *endptr = (CH*)p; return 0; }
+    const CH* s = p;
+    while (*s == (CH)' ' || *s == (CH)'\t' || *s == (CH)'\n' || *s == (CH)'\r') s++;
+    bool neg = false;
+    if (*s == (CH)'+' ) s++;
+    else if (*s == (CH)'-') { neg = true; s++; }
+    if ((base == 0 || base == 16) &&
+        s[0] == (CH)'0' && (s[1] == (CH)'x' || s[1] == (CH)'X')) { s += 2; base = 16; }
+    else if (base == 0 && s[0] == (CH)'0') { base = 8; }
+    else if (base == 0) { base = 10; }
+    unsigned long long acc = 0; bool any = false;
+    for (;; s++) {
+        CH c = *s; int d;
+        if (c >= (CH)'0' && c <= (CH)'9') d = (int)(c - (CH)'0');
+        else if (c >= (CH)'a' && c <= (CH)'z') d = (int)(c - (CH)'a') + 10;
+        else if (c >= (CH)'A' && c <= (CH)'Z') d = (int)(c - (CH)'A') + 10;
+        else break;
+        if (d >= base) break;
+        acc = acc * (unsigned long long)base + (unsigned long long)d;
+        any = true;
+    }
+    if (endptr) *endptr = (CH*)(any ? s : p);
+    return neg ? (unsigned long long)(-(long long)acc) : acc;
+}
+} // namespace
+
+extern "C" unsigned long long _wcstoui64(const wchar_t* s, wchar_t** endptr, int base) {
+    return sharpos_str2u64<wchar_t>(s, endptr, base);
+}
+CRT_REAL(_wcstoui64);
+
+extern "C" unsigned long long strtoull(const char* s, char** endptr, int base) {
+    return sharpos_str2u64<char>(s, endptr, base);
+}
+CRT_REAL(strtoull);
 
 extern "C" int _flushall(void) { return 0; }
 CRT_REAL(_flushall);
@@ -1221,6 +1256,12 @@ CRT_REAL(FlushViewOfFile);
 
 #define SHARPOS_ADVAPI32_HMODULE ((void*)(uintptr_t)0xAD7A1132U)
 #define SHARPOS_SYSNATIVE_HMODULE ((void*)(uintptr_t)0x5751A71EU)
+// kernel32/kernelbase/ntdll: the Windows-flavored framework P/Invokes
+// these; their exports ARE statically linked into the SharpOS image
+// (this very file). Sentinel handle → GetProcAddress maps names to the
+// in-image stubs (sharpos_resolve_kernel32). Without this LoadLibrary
+// file-loads kernel32.dll, fails, and the runtime throws DllNotFound.
+#define SHARPOS_KERNEL32_HMODULE  ((void*)(uintptr_t)0x6E32116CU)
 
 // Case-insensitive equality of last `n` UTF-16 chars in `s` with ASCII `tail`.
 static int sharpos_wstr_iends_with(const wchar_t* s, const char* tail) {
@@ -1246,6 +1287,19 @@ static int sharpos_is_advapi32(const wchar_t* name) {
     return sharpos_wstr_iends_with(name, "advapi32")
         || sharpos_wstr_iends_with(name, "advapi32.dll")
         || sharpos_wstr_iends_with(name, "advapi32.dll.dll");
+}
+
+static int sharpos_is_kernel32(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "kernel32")
+        || sharpos_wstr_iends_with(name, "kernel32.dll")
+        || sharpos_wstr_iends_with(name, "kernel32.dll.dll")
+        || sharpos_wstr_iends_with(name, "kernelbase")
+        || sharpos_wstr_iends_with(name, "kernelbase.dll")
+        || sharpos_wstr_iends_with(name, "kernelbase.dll.dll")
+        || sharpos_wstr_iends_with(name, "ntdll")
+        || sharpos_wstr_iends_with(name, "ntdll.dll")
+        || sharpos_wstr_iends_with(name, "ntdll.dll.dll");
 }
 
 // libSystem.Native — the .NET Unix native shim. Windows-built fork still
@@ -1282,6 +1336,12 @@ extern "C" void* LoadLibraryExW(const wchar_t* lpLibFileName, void* /*hFile*/, u
         SharpOSHost_DebugPrint("[LoadLibrary libSystem.Native] returning sentinel handle\n");
         g_LastError = 0;
         return SHARPOS_SYSNATIVE_HMODULE;
+    }
+    // kernel32/kernelbase/ntdll → sentinel; exports are in-image.
+    if (sharpos_is_kernel32(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary kernel32] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_KERNEL32_HMODULE;
     }
     void* handle = SharpOSHost_FileOpen(lpLibFileName);
     if (!handle) {
@@ -1711,6 +1771,17 @@ CRT_REAL(HeapDestroy);
 extern "C" __attribute__((weak)) void* SharpOSHost_AllocExecutable(uint64_t /*size*/) { return nullptr; }
 extern "C" __attribute__((weak)) int   SharpOSHost_ProtectExecutable(void* /*addr*/, uint64_t /*size*/, uint32_t /*flProtect*/) { return 0; }
 
+// S3 — true reserve≠commit via the SharpOS VM manager (OS/src/Kernel/Memory/
+// VirtualMemory.cs, exported by VirtualMemoryHost.cs). gcenv.windows.cpp's
+// GCToOSInterface::Virtual{Reserve,Commit,Decommit,Release} all funnel through
+// Win32 VirtualAlloc/VirtualFree → these. Replaces the old GcHeap commit-on-
+// alloc path (which made gc_heap degenerate → IsHeapPointer=false → Monitor
+// spin). Weak fallbacks so the non-kernel coreclr.dll smoke link still resolves.
+extern "C" __attribute__((weak)) void* SharpOSHost_VMReserve(uint64_t /*size*/, uint64_t /*align*/) { return nullptr; }
+extern "C" __attribute__((weak)) int   SharpOSHost_VMCommit(void* /*addr*/, uint64_t /*size*/, int /*exec*/) { return 0; }
+extern "C" __attribute__((weak)) int   SharpOSHost_VMDecommit(void* /*addr*/, uint64_t /*size*/) { return 1; }
+extern "C" __attribute__((weak)) int   SharpOSHost_VMRelease(void* /*addr*/, uint64_t /*size*/) { return 1; }
+
 // Win32 semantics we honour:
 //   lpAddress == NULL → allocate any address. exec=EfiLoaderCode pool with
 //     RWX patch; non-exec=GcHeap (RW, NX=1).
@@ -1719,58 +1790,53 @@ extern "C" __attribute__((weak)) int   SharpOSHost_ProtectExecutable(void* /*add
 //     page protection on the requested range. Returning a different address
 //     breaks CoreCLR's reserve+commit pattern для code heap (it computes
 //     code addresses inside the reservation it received).
-extern "C" void* VirtualAlloc(void* lpAddress, size_t dwSize, uint32_t /*flAllocationType*/, uint32_t flProtect) {
+extern "C" void* VirtualAlloc(void* lpAddress, size_t dwSize, uint32_t flAllocationType, uint32_t flProtect) {
     if (dwSize == 0) { g_LastError = 87 /*ERROR_INVALID_PARAMETER*/; return nullptr; }
     const size_t GRAN = 0x10000;
+    const uint32_t MEM_COMMIT_F  = 0x1000;
+    const uint32_t MEM_RESERVE_F = 0x2000;
 
-    bool wantExec = (flProtect & 0xF0u) != 0;
+    bool wantExec  = (flProtect & 0xF0u) != 0;
+    bool doReserve = (flAllocationType & MEM_RESERVE_F) != 0;
+    bool doCommit  = (flAllocationType & MEM_COMMIT_F) != 0;
     void* result = nullptr;
 
     if (lpAddress != nullptr) {
-        // Specific address requested → in-place protection change.
-        // Pages were already backed by an earlier reserve-style VirtualAlloc
-        // (which we serviced from GcHeap). SharpOSHost_ProtectExecutable
-        // walks each 4 KiB PTE in [lpAddress, lpAddress+dwSize) and sets
-        // Writable/NX bits per flProtect.
-        int rc = SharpOSHost_ProtectExecutable(lpAddress, (uint64_t)dwSize, flProtect);
+        // Commit (and/or protect) a sub-range of an earlier VMReserve. The
+        // VA is reserved-but-unbacked → VMCommit allocates frames + maps
+        // them (idempotent on already-committed pages). Covers GC region
+        // commit (RW) and any JIT commit-into-reserve (exec).
+        int rc = SharpOSHost_VMCommit(lpAddress, (uint64_t)dwSize, wantExec ? 1 : 0);
         result = rc ? lpAddress : nullptr;
-        SharpOSHost_DebugPrint("[VirtualAlloc-fixed] lp=0x");
+        SharpOSHost_DebugPrint("[VA commit] lp=0x");
         SharpOSHost_DebugPrintHex((uint64_t)lpAddress);
-        SharpOSHost_DebugPrint(" size=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)dwSize);
-        SharpOSHost_DebugPrint(" protect=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)flProtect);
+        SharpOSHost_DebugPrint(" size=0x"); SharpOSHost_DebugPrintHex((uint64_t)dwSize);
+        SharpOSHost_DebugPrint(" pr=0x");   SharpOSHost_DebugPrintHex((uint64_t)flProtect);
         SharpOSHost_DebugPrint(rc ? " ok\n" : " FAIL\n");
     } else if (wantExec) {
         // Fresh-anywhere exec allocation. EfiLoaderCode pool + RWX patch
-        // in SharpOSHost_AllocExecutable.
+        // (JIT code heap — unchanged, works; VM-migration is S6).
         void* execRaw = SharpOSHost_AllocExecutable((uint64_t)(dwSize + GRAN));
         if (execRaw) {
             uintptr_t alignedExec = ((uintptr_t)execRaw + (GRAN - 1)) & ~(uintptr_t)(GRAN - 1);
             result = (void*)alignedExec;
         }
-        SharpOSHost_DebugPrint("[VirtualAlloc] size=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)dwSize);
-        SharpOSHost_DebugPrint(" protect=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)flProtect);
-        SharpOSHost_DebugPrint(" result=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)result);
-        SharpOSHost_DebugPrint(" (exec)\n");
+        SharpOSHost_DebugPrint("[VA exec] size=0x"); SharpOSHost_DebugPrintHex((uint64_t)dwSize);
+        SharpOSHost_DebugPrint(" result=0x"); SharpOSHost_DebugPrintHex((uint64_t)result);
+        SharpOSHost_DebugPrint("\n");
     } else {
-        // Fresh-anywhere RW/RO/NOACCESS allocation. Use GcHeap. These
-        // backings serve subsequent commit-with-lpAddress calls that may
-        // re-protect a subrange (handled by the lpAddress != NULL branch).
-        void* raw = SharpOSHost_HeapAlloc(dwSize + GRAN);
-        if (raw) {
-            uintptr_t aligned = ((uintptr_t)raw + (GRAN - 1)) & ~(uintptr_t)(GRAN - 1);
-            result = (void*)aligned;
+        // Fresh-anywhere non-exec: reserve VA from the VM window (no backing).
+        // If MEM_COMMIT also set (or no flags = legacy reserve+commit), back
+        // it immediately. GC's big MEM_RESERVE(RegionRange) lands here cheap;
+        // it then commits sub-regions via the lpAddress!=NULL path.
+        void* va = SharpOSHost_VMReserve((uint64_t)dwSize, GRAN);
+        if (va != nullptr && (doCommit || !doReserve)) {
+            if (!SharpOSHost_VMCommit(va, (uint64_t)dwSize, 0)) va = nullptr;
         }
-        SharpOSHost_DebugPrint("[VirtualAlloc] size=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)dwSize);
-        SharpOSHost_DebugPrint(" protect=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)flProtect);
-        SharpOSHost_DebugPrint(" result=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)result);
+        result = va;
+        SharpOSHost_DebugPrint("[VA resv] size=0x"); SharpOSHost_DebugPrintHex((uint64_t)dwSize);
+        SharpOSHost_DebugPrint(" at=0x");  SharpOSHost_DebugPrintHex((uint64_t)flAllocationType);
+        SharpOSHost_DebugPrint(" result=0x"); SharpOSHost_DebugPrintHex((uint64_t)result);
         SharpOSHost_DebugPrint("\n");
     }
 
@@ -1780,11 +1846,15 @@ extern "C" void* VirtualAlloc(void* lpAddress, size_t dwSize, uint32_t /*flAlloc
 }
 CRT_REAL(VirtualAlloc);
 
-extern "C" int VirtualFree(void* lpAddress, size_t /*dwSize*/, uint32_t /*dwFreeType*/) {
+extern "C" int VirtualFree(void* lpAddress, size_t dwSize, uint32_t dwFreeType) {
     TRACE_REAL(VirtualFree);
-    SharpOSHost_HeapFree(lpAddress);
+    const uint32_t MEM_DECOMMIT_F = 0x4000;
+    const uint32_t MEM_RELEASE_F  = 0x8000;
+    int rc = 1;
+    if (dwFreeType & MEM_DECOMMIT_F) rc &= SharpOSHost_VMDecommit(lpAddress, (uint64_t)dwSize);
+    if (dwFreeType & MEM_RELEASE_F)  rc &= SharpOSHost_VMRelease(lpAddress, (uint64_t)dwSize);
     g_LastError = 0;
-    return 1;
+    return rc;
 }
 CRT_REAL(VirtualFree);
 
@@ -2045,6 +2115,19 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         g_LastError = 127;
         return nullptr;
     }
+    if (mod == SHARPOS_KERNEL32_HMODULE && name != nullptr) {
+        extern void* sharpos_resolve_kernel32(const char*);
+        void* p = sharpos_resolve_kernel32(name);
+        if (p != nullptr) { g_LastError = 0; return p; }
+        // Unknown → print the exact name so we extend precisely, and
+        // return nullptr (managed surfaces EntryPointNotFound, not the
+        // DllNotFound panic — we progress + learn the next symbol).
+        SharpOSHost_DebugPrint("[GetProcAddress kernel32] unknown name=");
+        SharpOSHost_DebugPrint(name);
+        SharpOSHost_DebugPrint("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
     g_LastError = 127;   // ERROR_PROC_NOT_FOUND — we have no exports
     return nullptr;
 }
@@ -2180,3 +2263,118 @@ extern "C" int RtlDeleteFunctionTable(void* /*functionTable*/) {
     return 1;
 }
 CRT_REAL(RtlDeleteFunctionTable);
+
+// ---------------------------------------------------------------------------
+// kernel32/kernelbase/ntdll P/Invoke resolver. The framework assemblies are
+// Windows-flavored; their [DllImport("kernel32.dll")] surface is statically
+// linked into this image. GetProcAddress(SHARPOS_KERNEL32_HMODULE, name)
+// funnels here. Defined at end of TU so every stub symbol above is visible.
+// Conservative starter set (all confirmed defined above); unknown names are
+// printed by GetProcAddress so we extend precisely, per the file's
+// "extend по мере появления новых walls" philosophy.
+extern "C" void* sharpos_resolve_kernel32(const char* n) {
+    // Errno / process / thread identity
+    if (sharpos_streq(n,"GetLastError"))                 return (void*)&GetLastError;
+    if (sharpos_streq(n,"SetLastError"))                 return (void*)&SetLastError;
+    if (sharpos_streq(n,"GetCurrentProcess"))            return (void*)&GetCurrentProcess;
+    if (sharpos_streq(n,"GetCurrentThread"))             return (void*)&GetCurrentThread;
+    if (sharpos_streq(n,"GetCurrentProcessId"))          return (void*)&GetCurrentProcessId;
+    if (sharpos_streq(n,"GetCurrentThreadId"))           return (void*)&GetCurrentThreadId;
+    if (sharpos_streq(n,"IsDebuggerPresent"))            return (void*)&IsDebuggerPresent;
+    if (sharpos_streq(n,"TerminateProcess"))             return (void*)&TerminateProcess;
+    if (sharpos_streq(n,"RaiseFailFastException"))       return (void*)&RaiseFailFastException;
+    // Time / perf
+    if (sharpos_streq(n,"QueryPerformanceCounter"))      return (void*)&QueryPerformanceCounter;
+    if (sharpos_streq(n,"QueryPerformanceFrequency"))    return (void*)&QueryPerformanceFrequency;
+    if (sharpos_streq(n,"GetTickCount64"))               return (void*)&GetTickCount64;
+    if (sharpos_streq(n,"GetSystemTimeAsFileTime"))      return (void*)&GetSystemTimeAsFileTime;
+    if (sharpos_streq(n,"GetSystemTime"))                return (void*)&GetSystemTime;
+    // Memory
+    if (sharpos_streq(n,"VirtualAlloc"))                 return (void*)&VirtualAlloc;
+    if (sharpos_streq(n,"VirtualFree"))                  return (void*)&VirtualFree;
+    if (sharpos_streq(n,"VirtualProtect"))               return (void*)&VirtualProtect;
+    if (sharpos_streq(n,"VirtualQuery"))                 return (void*)&VirtualQuery;
+    if (sharpos_streq(n,"GetProcessHeap"))               return (void*)&GetProcessHeap;
+    if (sharpos_streq(n,"HeapAlloc"))                    return (void*)&HeapAlloc;
+    if (sharpos_streq(n,"HeapFree"))                     return (void*)&HeapFree;
+    if (sharpos_streq(n,"HeapCreate"))                   return (void*)&HeapCreate;
+    if (sharpos_streq(n,"HeapDestroy"))                  return (void*)&HeapDestroy;
+    if (sharpos_streq(n,"GlobalMemoryStatusEx"))         return (void*)&GlobalMemoryStatusEx;
+    if (sharpos_streq(n,"GetLargePageMinimum"))          return (void*)&GetLargePageMinimum;
+    // System info / topology
+    if (sharpos_streq(n,"GetSystemInfo"))                return (void*)&GetSystemInfo;
+    if (sharpos_streq(n,"GetProcessAffinityMask"))       return (void*)&GetProcessAffinityMask;
+    if (sharpos_streq(n,"GetProcessGroupAffinity"))      return (void*)&GetProcessGroupAffinity;
+    if (sharpos_streq(n,"GetThreadGroupAffinity"))       return (void*)&GetThreadGroupAffinity;
+    if (sharpos_streq(n,"GetLogicalProcessorInformation"))   return (void*)&GetLogicalProcessorInformation;
+    if (sharpos_streq(n,"GetLogicalProcessorInformationEx")) return (void*)&GetLogicalProcessorInformationEx;
+    if (sharpos_streq(n,"IsProcessorFeaturePresent"))    return (void*)&IsProcessorFeaturePresent;
+    if (sharpos_streq(n,"GetEnabledXStateFeatures"))     return (void*)&GetEnabledXStateFeatures;
+    if (sharpos_streq(n,"GetNumaHighestNodeNumber"))     return (void*)&GetNumaHighestNodeNumber;
+    if (sharpos_streq(n,"IsProcessInJob"))               return (void*)&IsProcessInJob;
+    if (sharpos_streq(n,"QueryInformationJobObject"))    return (void*)&QueryInformationJobObject;
+    // Module / proc address
+    if (sharpos_streq(n,"LoadLibraryExW"))               return (void*)&LoadLibraryExW;
+    if (sharpos_streq(n,"LoadLibraryExA"))               return (void*)&LoadLibraryExA;
+    if (sharpos_streq(n,"LoadLibraryW"))                 return (void*)&LoadLibraryW;
+    if (sharpos_streq(n,"LoadLibraryA"))                 return (void*)&LoadLibraryA;
+    if (sharpos_streq(n,"FreeLibrary"))                  return (void*)&FreeLibrary;
+    if (sharpos_streq(n,"GetProcAddress"))               return (void*)&GetProcAddress;
+    if (sharpos_streq(n,"GetModuleHandleW"))             return (void*)&GetModuleHandleW;
+    if (sharpos_streq(n,"GetModuleHandleA"))             return (void*)&GetModuleHandleA;
+    if (sharpos_streq(n,"GetModuleFileNameW"))           return (void*)&GetModuleFileNameW;
+    // Synchronization / threads
+    if (sharpos_streq(n,"CreateThread"))                 return (void*)&CreateThread;
+    if (sharpos_streq(n,"ExitThread"))                   return (void*)&ExitThread;
+    if (sharpos_streq(n,"ResumeThread"))                 return (void*)&ResumeThread;
+    if (sharpos_streq(n,"GetThreadPriority"))            return (void*)&GetThreadPriority;
+    if (sharpos_streq(n,"SetThreadPriority"))            return (void*)&SetThreadPriority;
+    if (sharpos_streq(n,"SetThreadErrorMode"))           return (void*)&SetThreadErrorMode;
+    if (sharpos_streq(n,"CreateEventW"))                 return (void*)&CreateEventW;
+    if (sharpos_streq(n,"CreateEventA"))                 return (void*)&CreateEventA;
+    if (sharpos_streq(n,"CreateSemaphoreExW"))           return (void*)&CreateSemaphoreExW;
+    if (sharpos_streq(n,"SetEvent"))                     return (void*)&SetEvent;
+    if (sharpos_streq(n,"ResetEvent"))                   return (void*)&ResetEvent;
+    if (sharpos_streq(n,"ReleaseSemaphore"))             return (void*)&ReleaseSemaphore;
+    if (sharpos_streq(n,"CloseHandle"))                  return (void*)&CloseHandle;
+    if (sharpos_streq(n,"DuplicateHandle"))              return (void*)&DuplicateHandle;
+    if (sharpos_streq(n,"WaitForSingleObject"))          return (void*)&WaitForSingleObject;
+    if (sharpos_streq(n,"WaitForSingleObjectEx"))        return (void*)&WaitForSingleObjectEx;
+    if (sharpos_streq(n,"WaitForMultipleObjects"))       return (void*)&WaitForMultipleObjects;
+    if (sharpos_streq(n,"WaitForMultipleObjectsEx"))     return (void*)&WaitForMultipleObjectsEx;
+    if (sharpos_streq(n,"InitializeCriticalSection"))    return (void*)&InitializeCriticalSection;
+    if (sharpos_streq(n,"EnterCriticalSection"))         return (void*)&EnterCriticalSection;
+    if (sharpos_streq(n,"LeaveCriticalSection"))         return (void*)&LeaveCriticalSection;
+    if (sharpos_streq(n,"DeleteCriticalSection"))        return (void*)&DeleteCriticalSection;
+    if (sharpos_streq(n,"AcquireSRWLockExclusive"))      return (void*)&AcquireSRWLockExclusive;
+    if (sharpos_streq(n,"ReleaseSRWLockExclusive"))      return (void*)&ReleaseSRWLockExclusive;
+    if (sharpos_streq(n,"SleepConditionVariableSRW"))    return (void*)&SleepConditionVariableSRW;
+    // Strings / codepage
+    if (sharpos_streq(n,"MultiByteToWideChar"))          return (void*)&MultiByteToWideChar;
+    if (sharpos_streq(n,"WideCharToMultiByte"))          return (void*)&WideCharToMultiByte;
+    if (sharpos_streq(n,"GetConsoleOutputCP"))           return (void*)&GetConsoleOutputCP;
+    if (sharpos_streq(n,"GetCPInfo"))                    return (void*)&GetCPInfo;
+    if (sharpos_streq(n,"OutputDebugStringA"))           return (void*)&OutputDebugStringA;
+    if (sharpos_streq(n,"OutputDebugStringW"))           return (void*)&OutputDebugStringW;
+    // Environment / command line
+    if (sharpos_streq(n,"GetEnvironmentVariableW"))      return (void*)&GetEnvironmentVariableW;
+    if (sharpos_streq(n,"GetEnvironmentVariableA"))      return (void*)&GetEnvironmentVariableA;
+    if (sharpos_streq(n,"GetEnvironmentStringsW"))       return (void*)&GetEnvironmentStringsW;
+    if (sharpos_streq(n,"FreeEnvironmentStringsW"))      return (void*)&FreeEnvironmentStringsW;
+    if (sharpos_streq(n,"GetCommandLineW"))              return (void*)&GetCommandLineW;
+    if (sharpos_streq(n,"GetFullPathNameW"))             return (void*)&GetFullPathNameW;
+    // Files / pipes
+    if (sharpos_streq(n,"CreateFileW"))                  return (void*)&CreateFileW;
+    if (sharpos_streq(n,"CreateFileMappingW"))           return (void*)&CreateFileMappingW;
+    if (sharpos_streq(n,"FlushViewOfFile"))              return (void*)&FlushViewOfFile;
+    if (sharpos_streq(n,"CreateNamedPipeA"))             return (void*)&CreateNamedPipeA;
+    if (sharpos_streq(n,"ReadFile"))                     return (void*)&ReadFile;
+    if (sharpos_streq(n,"SetFilePointer"))               return (void*)&SetFilePointer;
+    if (sharpos_streq(n,"GetFileSize"))                  return (void*)&GetFileSize;
+    // Misc / EH / icache
+    if (sharpos_streq(n,"FlushInstructionCache"))        return (void*)&FlushInstructionCache;
+    if (sharpos_streq(n,"RtlCaptureContext"))            return (void*)&RtlCaptureContext;
+    if (sharpos_streq(n,"RtlInstallFunctionTableCallback")) return (void*)&RtlInstallFunctionTableCallback;
+    if (sharpos_streq(n,"RtlDeleteFunctionTable"))       return (void*)&RtlDeleteFunctionTable;
+    return nullptr;   // unknown → GetProcAddress prints the name
+}

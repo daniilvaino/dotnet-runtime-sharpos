@@ -21,6 +21,50 @@
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
 extern "C" void SharpOSHost_DebugPrint(const char*);
 extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+
+// Print a managed String object as ASCII (layout: +0x08 length int,
+// +0x0C UTF-16 chars). Guarded; we run inside AVInRuntimeImplOkayHolder.
+static void SharpOS_PrintMStr(void* s)
+{
+    if (s == nullptr) { SharpOSHost_DebugPrint("<null>"); return; }
+    int slen = *(int*)((uint8_t*)s + 0x08);
+    if (slen < 0 || slen > 96) { SharpOSHost_DebugPrint("<badlen>"); return; }
+    uint16_t* ch = (uint16_t*)((uint8_t*)s + 0x0C);
+    char b[97]; int j = 0;
+    for (; j < slen && j < 96; j++) b[j] = (char)(ch[j] & 0x7F);
+    b[j] = 0;
+    SharpOSHost_DebugPrint(b);
+}
+
+// Out-of-line tripwire called from Object::RawSetMethodTable (object.h). The
+// VM window (demand-mapped GC + PE images) starts at 0x0000500000000000;
+// anything below that is the native/kernel bump arena. A MethodTable being
+// stamped onto an object down there means a managed object is being built in
+// non-GC memory — the exact bug behind the [VH] spin. Log obj/mt + the
+// caller's return address (RawSetMethodTable is a tiny inline, so this is
+// effectively the allocator/placement site). Hard-throttled: this is on the
+// every-object path.
+#define SHARPOS_VM_WINDOW_BASE 0x0000500000000000ULL
+extern "C" void SharpOS_OnObjMTStamp(void* obj, void* mt)
+{
+    if (obj == nullptr || (uint64_t)obj >= SHARPOS_VM_WINDOW_BASE)
+        return;                                  // in window → normal, fast path
+    // Low bit of mt = 1 → caller is SetMethodTableForUOHObject (UOH / non-GC /
+    // pinned / frozen heap path); 0 → RawSetMethodTable (normal SOH path).
+    bool uoh = ((uintptr_t)mt & 1) != 0;
+    uintptr_t realMt = (uintptr_t)mt & ~(uintptr_t)1;
+    static int s_mtStampCount = 0;
+    if (s_mtStampCount >= 48)
+        return;
+    s_mtStampCount++;
+    SharpOSHost_DebugPrint(uoh ? "[MTSTAMP-UOH] obj=0x" : "[MTSTAMP] obj=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)obj);
+    SharpOSHost_DebugPrint(" mt=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)realMt);
+    SharpOSHost_DebugPrint(" ra=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)_ReturnAddress());
+    SharpOSHost_DebugPrint("\n");
+}
 #endif
 
 
@@ -573,17 +617,100 @@ VOID Object::ValidateInner(BOOL bDeep, BOOL bVerifyNextHeader, BOOL bVerifySyncB
             // halting on every failed check.
             if (!bSmallObjectHeapPtr && !bLargeObjectHeapPtr)
             {
-                SharpOSHost_DebugPrint("[VH] this=0x");
-                SharpOSHost_DebugPrintHex((uint64_t)this);
-                SharpOSHost_DebugPrint(" pMT=0x");
-                SharpOSHost_DebugPrintHex((uint64_t)pMT);
-                if (pMT != nullptr)
+                // Throttle: a spin validating one bad object would flood the
+                // log and never reach the interesting follow-up. 24 is enough
+                // to see the distinct culprits + their call sites.
+                static int s_vhCount = 0;
+                if (s_vhCount < 24)
                 {
-                    SharpOSHost_DebugPrint(" name=");
-                    const char* n = pMT->GetDebugClassName();
-                    SharpOSHost_DebugPrint(n ? n : "<null>");
+                    s_vhCount++;
+                    SharpOSHost_DebugPrint("[VH] this=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)this);
+                    SharpOSHost_DebugPrint(" pMT=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)pMT);
+                    if (pMT != nullptr)
+                    {
+                        SharpOSHost_DebugPrint(" name=");
+                        const char* n = pMT->GetDebugClassName();
+                        SharpOSHost_DebugPrint(n ? n : "<null>");
+                    }
+                    // GC-range classification: is `this` even inside the GC's
+                    // [g_lowest,g_highest) window (→ unsegmented region) or
+                    // entirely outside it (→ native operator-new arena)?
+                    SharpOSHost_DebugPrint(" gcLo=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)g_lowest_address);
+                    SharpOSHost_DebugPrint(" gcHi=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)g_highest_address);
+                    SharpOSHost_DebugPrint(((uint8_t*)this >= g_lowest_address &&
+                                            (uint8_t*)this <  g_highest_address)
+                                           ? " inGCrange" : " NATIVE-arena");
+                    // Immediate caller of Validate() — the assert site that
+                    // tripped (helps trace which runtime path holds this ref).
+                    SharpOSHost_DebugPrint(" ra=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)_ReturnAddress());
+                    SharpOSHost_DebugPrint("\n");
+
+                    // Look at the object itself. hdr = ObjHeader qword
+                    // (sync-block index, 8 bytes before MT). q0 must == pMT
+                    // if this is a real object. q1.. are the instance fields:
+                    // for a real Dictionary<string,object> they're small ints
+                    // / null / pointers INTO the GC window (0x5000_...); wild
+                    // garbage ⇒ this is a stale / mis-cast OBJECTREF, not an
+                    // object at all. We're inside AVInRuntimeImplOkayHolder so
+                    // a bad read is caught, not fatal.
+                    uint64_t* q = (uint64_t*)this;
+                    SharpOSHost_DebugPrint("[VHdump] hdr=0x");
+                    SharpOSHost_DebugPrintHex(q[-1]);
+                    for (int qi = 0; qi < 12; qi++)
+                    {
+                        SharpOSHost_DebugPrint(qi == 0 ? " q0=0x" : " q=0x");
+                        SharpOSHost_DebugPrintHex(q[qi]);
+                    }
+                    SharpOSHost_DebugPrint("\n");
+
+                    // If it's a Dictionary<,>, interpret the managed layout
+                    // (offsets confirmed by the q-dump: _entries@+0x10,
+                    // _count@+0x38 low32). Print count, then up to 8 keys as
+                    // ASCII. For the startup string->object dict the keys are
+                    // our own coreclr_initialize property names — an
+                    // unambiguous fingerprint of WHICH dictionary this is.
+                    // All derefs are guarded; we're inside the AV-okay holder.
+                    if (pMT != nullptr)
+                    {
+                        const char* nm = pMT->GetDebugClassName();
+                        bool isDict = false;
+                        if (nm != nullptr)
+                            for (const char* s = nm; s[0] && s[1] && s[2]; s++)
+                                if (s[0]=='`' && s[1]=='2') { isDict = (nm < s && s[-1]=='y'); break; }
+                        if (isDict)
+                        {
+                            uint8_t* o = (uint8_t*)this;
+                            int cnt = *(int*)(o + 0x38);
+                            void* entries = *(void**)(o + 0x10);
+                            SharpOSHost_DebugPrint("[VHdict] count=");
+                            SharpOSHost_DebugPrintHex((uint64_t)(uint32_t)cnt);
+                            SharpOSHost_DebugPrint(" entries=0x");
+                            SharpOSHost_DebugPrintHex((uint64_t)entries);
+                            if (entries != nullptr && cnt > 0 && cnt <= 64)
+                            {
+                                uint8_t* e = (uint8_t*)entries + 0x10; // Entry[0]
+                                for (int i = 0; i < cnt && i < 8; i++)
+                                {
+                                    // Entry (refs reordered first by auto-layout):
+                                    // key@+0x00, value@+0x08, then hash/next. 24B.
+                                    uint8_t* ent = e + (size_t)i*0x18;
+                                    void* k = *(void**)(ent + 0x00);
+                                    void* v = *(void**)(ent + 0x08);
+                                    SharpOSHost_DebugPrint(" k=");
+                                    SharpOS_PrintMStr(k);
+                                    SharpOSHost_DebugPrint(" v=");
+                                    SharpOS_PrintMStr(v);
+                                }
+                            }
+                            SharpOSHost_DebugPrint("\n");
+                        }
+                    }
                 }
-                SharpOSHost_DebugPrint(" SOH=0 LOH=0\n");
             }
 #else
             CHECK_AND_TEAR_DOWN(bSmallObjectHeapPtr || bLargeObjectHeapPtr);
