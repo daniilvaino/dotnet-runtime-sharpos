@@ -21,6 +21,13 @@
 #include <crsttypes_generated.h>
 #undef __IN_CRST_CPP
 
+#if defined(TARGET_SHARPOS)
+// SharpOS port (Phase 6.1.b diag): host-side serial print used by Crst::Enter
+// uninitialized-lock localization probe below.
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
+
 #ifndef DACCESS_COMPILE
 Volatile<LONG> g_ShutdownCrstUsageCount = 0;
 
@@ -218,6 +225,58 @@ void CrstBase::Enter(INDEBUG(NoLevelCheckFlag noLevelCheckFlag/* = CRST_LEVEL_CH
 
     STATIC_CONTRACT_CAN_TAKE_LOCK;
 
+#if defined(TARGET_SHARPOS)
+    // SharpOS port (Phase 6.1.b push-through): lazy-init Crst if caller forgot.
+    // Some lock holders (notably AppDomain::m_JITLock, taken from prestub.cpp
+    // before AppDomain::Init has reached its Init() line) try Enter() on a
+    // zero-initialized Crst. Real root cause is missing/early Init(); for now
+    // we lazy-init с default flags so we can observe the next runtime wall.
+    //
+    // Prints (this, c0/c1/c2) once on first occurrence so a follow-up can
+    // localize the offending callsite.
+    if (!IsCrstInitialized()) {
+        SharpOSHost_DebugPrint("[Crst::Enter uninit→lazy-init] this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint(" c0=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)__builtin_return_address(0));
+        SharpOSHost_DebugPrint("\n");
+
+        // Dump 64 QWORDs from current RSP — they include return addresses
+        // up the caller chain. Useful when ICF makes c0 ambiguous: deeper
+        // frames are unique to the specific call site.
+        // Filter: only print values that LOOK like return addresses в kernel
+        // image range (0xC0xxxxxx..0xD0xxxxxx), reducing noise.
+        uint64_t rsp;
+        __asm__ volatile("mov %%rsp, %0" : "=r"(rsp));
+        SharpOSHost_DebugPrint("[stack-dump] rsp=0x");
+        SharpOSHost_DebugPrintHex(rsp);
+        SharpOSHost_DebugPrint("\n");
+        for (int i = 0; i < 64; i++) {
+            uint64_t v = *(uint64_t*)(rsp + i * 8);
+            // Heuristic: kernel image lives roughly in 0xC100000..0xD300000.
+            if (v >= 0xC100000ULL && v < 0xD300000ULL) {
+                SharpOSHost_DebugPrint("  [+0x");
+                SharpOSHost_DebugPrintHex((uint64_t)(i * 8));
+                SharpOSHost_DebugPrint("] = 0x");
+                SharpOSHost_DebugPrintHex(v);
+                SharpOSHost_DebugPrint("\n");
+            }
+        }
+        // Init mutex storage + set flags. CrstJit matches the actual lock
+        // we have empirically identified (AppDomain::m_JITLock). For other
+        // lazy-inited Crsts the type label is wrong but only affects debug
+        // contract checks, not mutex semantics. _ASSERTE inside InitWorker
+        // checks (flags & CRST_INITIALIZED) == 0 — our m_dwFlags is 0, so
+        // satisfied.
+        InitWorker(INDEBUG_COMMA(CrstJit) CrstFlags(CRST_REENTRANCY | CRST_UNSAFE_SAMELEVEL));
+        SharpOSHost_DebugPrint("[Crst::Enter lazy-init done] this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint(" flags=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)m_dwFlags);
+        SharpOSHost_DebugPrint("\n");
+    }
+#endif
+
     _ASSERTE(IsCrstInitialized());
 
     BOOL fIsCriticalSectionEnteredAfterFailingOnce = FALSE;
@@ -256,16 +315,56 @@ void CrstBase::Enter(INDEBUG(NoLevelCheckFlag noLevelCheckFlag/* = CRST_LEVEL_CH
         }
     }
 
+#if defined(TARGET_SHARPOS)
+    // Heartbeat trace — only for lazy-inited Crsts (whose flags we set
+    // including CRST_INITIALIZED at bit 31). Avoids per-call spam from
+    // already-init'd locks; only this initial path warrants observability.
+    static volatile int s_sharpos_enter_phase = 0;
+    if (m_dwFlags == 0x80000003) {   // exactly what lazy-init produces
+        SharpOSHost_DebugPrint("[Crst::Enter] before mutex_enter this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint("\n");
+        s_sharpos_enter_phase = 1;
+    }
+#endif
+
     minipal_mutex_enter(&m_lock._mtx);
+
+#if defined(TARGET_SHARPOS)
+    if (s_sharpos_enter_phase == 1) {
+        SharpOSHost_DebugPrint("[Crst::Enter] after mutex_enter this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint("\n");
+        s_sharpos_enter_phase = 2;
+    }
+#endif
 
 #ifdef _DEBUG
     PostEnter();
+#endif
+
+#if defined(TARGET_SHARPOS)
+    if (s_sharpos_enter_phase == 2) {
+        SharpOSHost_DebugPrint("[Crst::Enter] after PostEnter this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint("\n");
+        s_sharpos_enter_phase = 3;
+    }
 #endif
 
     if (fToggle)
     {
         pThread->DisablePreemptiveGC();
     }
+
+#if defined(TARGET_SHARPOS)
+    if (s_sharpos_enter_phase == 3) {
+        SharpOSHost_DebugPrint("[Crst::Enter] returning this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint("\n");
+        s_sharpos_enter_phase = 0;
+    }
+#endif
 }
 
 //-----------------------------------------------------------------
@@ -278,6 +377,15 @@ void CrstBase::Leave()
     STATIC_CONTRACT_GC_NOTRIGGER;
 
     _ASSERTE(IsCrstInitialized());
+
+#if defined(TARGET_SHARPOS)
+    // Track Leave for lazy-inited Crst (matches Enter phase tracker).
+    if (m_dwFlags == 0x80000003) {
+        SharpOSHost_DebugPrint("[Crst::Leave] this=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)this);
+        SharpOSHost_DebugPrint("\n");
+    }
+#endif
 
 #ifdef _DEBUG
     PreLeave ();
@@ -399,6 +507,15 @@ void CrstBase::PostEnter()
     {
         _ASSERTE((m_next == NULL) && (m_prev == NULL));
 
+#if defined(TARGET_SHARPOS)
+        // SharpOS port (Phase 6.1.b): silent skip of OwnedCrstsChain link.
+        // The chain walk `while (pcrst->m_next != NULL) pcrst = pcrst->m_next`
+        // was hanging silently — empirically confirmed via prior diagnostic
+        // run (tls_chain was always 0x0 but the previous version's loop body
+        // was reentering Crst::Enter recursively before our lazy-init guard
+        // landed). Skipping the bookkeeping costs only a missing Debug-only
+        // chain consistency check.
+#else
         // Link this Crst into the Thread's chain of OwnedCrsts
         CrstBase *pcrst = t_pOwnedCrstsChain;
         if (pcrst == NULL)
@@ -412,6 +529,7 @@ void CrstBase::PostEnter()
             pcrst->m_next = this;
             m_prev = pcrst;
         }
+#endif
     }
 
     Thread * pThread = GetThreadNULLOk();
@@ -454,6 +572,11 @@ void CrstBase::PreLeave()
     if (!m_entercount) {
         m_holderthreadid.Clear();
 
+#if !defined(TARGET_SHARPOS)
+        // SharpOS port (Phase 6.1.b): chain bookkeeping skipped here too —
+        // PostEnter never linked, so m_prev/m_next are 0; writing
+        // t_pOwnedCrstsChain через wrong TLS slot would corrupt random
+        // memory.
         // Delink it from the Thread's chain of OwnedChain
         if (m_prev)
             m_prev->m_next = m_next;
@@ -465,6 +588,7 @@ void CrstBase::PreLeave()
 
         m_next = NULL;
         m_prev = NULL;
+#endif
     }
 
     Thread * pThread = GetThreadNULLOk();

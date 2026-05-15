@@ -157,10 +157,18 @@ namespace BINDER_SPACE
                 return S_FALSE;
             }
 
+#if !defined(TARGET_SHARPOS)
+            // SharpOS: UEFI-style paths begin with `\sharpos\...` — without a
+            // drive letter or UNC prefix Path::IsRelative classifies them as
+            // relative, и TPA validation rejects them с E_INVALIDARG.
+            // Our PE loader (SharpOSHost_FileOpen → Platform.TryReadFile) treats
+            // such paths as root-absolute on the ESP filesystem, so they're
+            // valid в нашем мире — skip the upstream check.
             if (Path::IsRelative(outPath))
             {
                 GO_WITH_HRESULT(E_INVALIDARG);
             }
+#endif
 
             {
                 // Find the beginning of the simple name

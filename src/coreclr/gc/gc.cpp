@@ -49334,6 +49334,16 @@ HRESULT GCHeap::Initialize()
         }
         else
         {
+#ifdef TARGET_SHARPOS
+            // SharpOS unikernel: no MMU-backed reserve/commit split — every
+            // reserved byte costs real RAM. Cap the regions table at 64 MiB
+            // (vs upstream 4-256 GiB) so EE init doesn't try to grab the
+            // whole kernel heap. Need at least min_regions_per_heap × 1 MiB
+            // ≈ 19 MiB; 64 MiB gives ~45 regions of headroom for early GC.
+            // Limits managed heap upper bound; fine for boot smoke + Phase
+            // 6.1.b empirical advance.
+            gc_heap::regions_range = (size_t)64 * 1024 * 1024;
+#else
             gc_heap::regions_range =
 #ifdef MULTIPLE_HEAPS
             // For SVR use max of 2x total_physical_memory or 256gb
@@ -49343,6 +49353,7 @@ HRESULT GCHeap::Initialize()
             min(
 #endif // MULTIPLE_HEAPS
                 (size_t)256 * 1024 * 1024 * 1024, (size_t)(2 * gc_heap::total_physical_mem));
+#endif // TARGET_SHARPOS
         }
         size_t virtual_mem_limit = GCToOSInterface::GetVirtualMemoryLimit();
         gc_heap::regions_range = min(gc_heap::regions_range, virtual_mem_limit/2);

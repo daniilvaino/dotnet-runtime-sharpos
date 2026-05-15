@@ -495,18 +495,24 @@ typedef Wrapper<void *, DoNothing, VoidCLRUnmapViewOfFile> CLRMapViewHolder;
 typedef Wrapper<void *, DoNothing, DoNothing> CLRMapViewHolder;
 #endif
 
-// SharpOS port: PEFile loading через PAL_LOADLoadPEFile/UnloadPEFile не нужен
-// в Phase 6.1 (kernel image статически линкуется, нет dynamic .NET assembly
-// loading from file system на этой stage). pal.h not transitively included
-// здесь на TARGET_SHARPOS build, so PALPEFileHolder lib unused stays simple.
-#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
+// SharpOS port: now goes through PAL_LOADLoadPEFile path same as Unix
+// (Phase 6.1.b — dynamic assembly loading enabled via UEFI SimpleFileSystem).
+// На TARGET_SHARPOS pal.h не подключается (тянет Unix headers); прямо
+// declare the PAL_LOAD* signatures we need so util.hpp compiles. Real
+// implementation lives в pal/sharpos/crt_imp_stubs.cpp.
+#if defined(TARGET_UNIX)
+#if defined(TARGET_SHARPOS)
+extern "C" BOOL PAL_LOADUnloadPEFile(void* ptr);
+extern "C" void* PAL_LOADLoadPEFile(HANDLE hFile, size_t offset);
+extern "C" BOOL PAL_LOADMarkSectionAsNotNeeded(void* ptr);
+#endif
 #ifndef DACCESS_COMPILE
 FORCEINLINE void VoidPALUnloadPEFile(void *ptr) { PAL_LOADUnloadPEFile(ptr); }
 typedef Wrapper<void *, DoNothing, VoidPALUnloadPEFile> PALPEFileHolder;
 #else
 typedef Wrapper<void *, DoNothing, DoNothing> PALPEFileHolder;
 #endif
-#endif // TARGET_UNIX && !TARGET_SHARPOS
+#endif // TARGET_UNIX
 
 #define SetupThreadForComCall(OOMRetVal)            \
     MAKE_CURRENT_THREAD_AVAILABLE_EX(GetThreadNULLOk()); \

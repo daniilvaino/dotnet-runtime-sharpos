@@ -7,6 +7,10 @@
 #include "clr/fs/path.h"
 using namespace clr::fs;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+#endif
+
 // Specifies whether hostpolicy is embedded in executable or standalone
 extern bool g_hostpolicy_embedded;
 
@@ -486,7 +490,29 @@ namespace
             return NULL;
 
         NATIVE_LIBRARY_HANDLE hmod = NULL;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // SharpOS: assembly paths are UEFI-style `\sharpos\X.dll` — start
+        // with `\` but no drive letter и not UNC, so Path::IsRelative returns
+        // true. Assert is invariant tripwire, не безопасности — path
+        // manipulation ниже всё равно нормально fall-through-ит к
+        // LocalLoadLibraryHelper, который для отсутствующих native lib
+        // (Advapi32 в ETW init) вернёт NULL, и caller обработает "no ETW".
+        {
+            SharpOSHost_DebugPrint("[nativelib] LoadFromPInvokeAssembly path=\"");
+            char buf[2] = { 0, 0 };
+            LPCWSTR pw = path.GetUnicode();
+            for (size_t i = 0; pw[i] != 0 && i < 512; i++)
+            {
+                wchar_t c = pw[i];
+                buf[0] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+                SharpOSHost_DebugPrint(buf);
+            }
+            SharpOSHost_DebugPrint("\" isRelative=");
+            SharpOSHost_DebugPrint(Path::IsRelative(path) ? "1\n" : "0\n");
+        }
+#else
         _ASSERTE(!Path::IsRelative(path));
+#endif
 
         SString::Iterator lastPathSeparatorIter = path.End();
         if (PEAssembly::FindLastPathSeparator(path, lastPathSeparatorIter))

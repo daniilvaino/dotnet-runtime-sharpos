@@ -637,11 +637,15 @@ RETAIL_CONFIG_STRING_INFO(INTERNAL_LTTngConfig, W("LTTngConfig"), "Configuration
 // Executable code
 //
 // TODO: https://github.com/dotnet/runtime/issues/103465
-#ifdef TARGET_RISCV64
+#if defined(TARGET_RISCV64) || defined(TARGET_SHARPOS)
+// SharpOS kernel controls memory protection at page-table level; W^X double-
+// mapping pulls CreateFileMappingA + MapViewOfFile which we'd need to fake.
+// Disable by default — falls through to ClrVirtualAlloc path which is simpler
+// to route to SharpOSHost virtual memory.
 RETAIL_CONFIG_DWORD_INFO(EXTERNAL_EnableWriteXorExecute, W("EnableWriteXorExecute"), 0, "Enable W^X for executable memory.");
 #else
 RETAIL_CONFIG_DWORD_INFO(EXTERNAL_EnableWriteXorExecute, W("EnableWriteXorExecute"), 1, "Enable W^X for executable memory.");
-#endif // TARGET_RISCV64
+#endif // TARGET_RISCV64 || TARGET_SHARPOS
 
 #ifdef FEATURE_GDBJIT
 ///

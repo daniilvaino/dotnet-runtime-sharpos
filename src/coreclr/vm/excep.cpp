@@ -38,6 +38,34 @@
 #endif
 
 #include <errorrep.h>
+
+#if defined(TARGET_SHARPOS)
+// SharpOS port (Phase 6.1.b diag): host-side serial print used by
+// ThrowTypeLoadException instrumentation below.
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+
+// Print a UTF-8 (null-terminated) string verbatim. NULL → "(null)".
+static inline void sharpos_print_utf8(const char* s)
+{
+    if (s == nullptr) { SharpOSHost_DebugPrint("(null)"); return; }
+    SharpOSHost_DebugPrint(s);
+}
+
+// Print a UTF-16 (null-terminated) string downconverted to ASCII (replace
+// non-printable / >0x7F with '?'). NULL → "(null)".
+static inline void sharpos_print_utf16(const wchar_t* s)
+{
+    if (s == nullptr) { SharpOSHost_DebugPrint("(null)"); return; }
+    char buf[2] = { 0, 0 };
+    for (size_t i = 0; s[i] != 0 && i < 512; i++)
+    {
+        wchar_t c = s[i];
+        buf[0] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
+        SharpOSHost_DebugPrint(buf);
+    }
+}
+#endif // TARGET_SHARPOS
 #ifndef TARGET_UNIX
 // Include definition of GenericModeBlock
 #include <msodw.h>
@@ -10928,6 +10956,24 @@ VOID DECLSPEC_NORETURN ThrowTypeLoadException(LPCWSTR pFullTypeName,
     }
     CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS)
+    // SharpOS port (Phase 6.1.b diag): dump TypeLoad throw payload before
+    // the C++ throw fires. This is where most TypeLoad failures funnel,
+    // so capturing the (type, assembly, resID) triplet here is sufficient
+    // to identify what CoreCLR couldn't load.
+    SharpOSHost_DebugPrint("[typeload-exception] fullName='");
+    sharpos_print_utf16(pFullTypeName);
+    SharpOSHost_DebugPrint("' assembly='");
+    sharpos_print_utf16(pAssemblyName);
+    SharpOSHost_DebugPrint("' msgArg='");
+    sharpos_print_utf8(pMessageArg);
+    SharpOSHost_DebugPrint("' resID=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)resIDWhy);
+    SharpOSHost_DebugPrint(" caller=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)__builtin_return_address(0));
+    SharpOSHost_DebugPrint("\n");
+#endif
+
     EX_THROW(EETypeLoadException, (pFullTypeName, pAssemblyName, pMessageArg, resIDWhy));
 }
 
@@ -11067,6 +11113,24 @@ VOID DECLSPEC_NORETURN ThrowTypeLoadException(LPCUTF8 pszNameSpace,
         MODE_ANY;
     }
     CONTRACTL_END;
+
+#if defined(TARGET_SHARPOS)
+    // SharpOS port (Phase 6.1.b diag): dump TypeLoad throw payload before
+    // the C++ throw fires. (split-name overload — namespace + type)
+    SharpOSHost_DebugPrint("[typeload-exception] ns='");
+    sharpos_print_utf8(pszNameSpace);
+    SharpOSHost_DebugPrint("' name='");
+    sharpos_print_utf8(pTypeName);
+    SharpOSHost_DebugPrint("' assembly='");
+    sharpos_print_utf16(pAssemblyName);
+    SharpOSHost_DebugPrint("' msgArg='");
+    sharpos_print_utf8(pMessageArg);
+    SharpOSHost_DebugPrint("' resID=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)resIDWhy);
+    SharpOSHost_DebugPrint(" caller=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)__builtin_return_address(0));
+    SharpOSHost_DebugPrint("\n");
+#endif
 
     EX_THROW(EETypeLoadException, (pszNameSpace, pTypeName, pAssemblyName, pMessageArg, resIDWhy));
 }

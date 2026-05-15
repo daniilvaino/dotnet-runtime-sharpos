@@ -10,6 +10,11 @@
 #include "excep.h"
 #include "pendingload.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
+
 #ifndef DACCESS_COMPILE
 
 #ifdef PENDING_TYPE_LOAD_TABLE_STATS
@@ -327,9 +332,17 @@ PendingTypeLoadTable* PendingTypeLoadTable::GetTable()
 /*static*/
 void PendingTypeLoadTable::Init()
 {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[PendingTypeLoadTable::Init] count=");
+    SharpOSHost_DebugPrintHex((uint64_t)PendingTypeLoadTableShardCount);
+    SharpOSHost_DebugPrint("\n");
+#endif
     STANDARD_VM_CONTRACT;
     for (int i = 0; i < PendingTypeLoadTableShardCount; i++)
         GetTable()->m_shards[i].Init();
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[PendingTypeLoadTable::Init] done\n");
+#endif
 }
 
 PendingTypeLoadTable::Shard* PendingTypeLoadTable::GetShard(const TypeKey &typeKey, ClassLoader* pClassLoader, DWORD *pHashCodeForType)

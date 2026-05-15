@@ -47,6 +47,12 @@
 #include "virtualcallstub.h"
 #include "stringarraylist.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// SharpOS port (Phase 6.1.b diag): host-side serial print used by inline
+// TypeLoad/TypeDef diagnostics below.
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
 
 NameHandle::NameHandle(ModuleBase* pModule, mdToken token) :
     m_nameSpace(NULL),
@@ -1871,6 +1877,15 @@ TypeHandle ClassLoader::LoadTypeDefThrowing(Module *pModule,
 
     if (IsNilToken(typeDef) || TypeFromToken(typeDef) != mdtTypeDef || !pInternalImport->IsValidToken(typeDef) )
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[LoadTypeDef-bogus] token=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)typeDef);
+        SharpOSHost_DebugPrint(" reasons=");
+        if (IsNilToken(typeDef)) SharpOSHost_DebugPrint("nil ");
+        if (TypeFromToken(typeDef) != mdtTypeDef) SharpOSHost_DebugPrint("not-mdtTypeDef ");
+        if (!pInternalImport->IsValidToken(typeDef)) SharpOSHost_DebugPrint("not-valid ");
+        SharpOSHost_DebugPrint("\n");
+#endif
         LOG((LF_CLASSLOADER, LL_INFO10, "Bogus class token to load: 0x%08x\n", typeDef));
         typeHnd = TypeHandle();
     }
@@ -1981,6 +1996,22 @@ TypeHandle ClassLoader::LoadTypeDefThrowing(Module *pModule,
 
     if ((fNotFoundAction == ThrowIfNotFound) && typeHnd.IsNull() && (tokenNotToLoad != tdAllTypes))
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // SharpOS port (Phase 6.1.b diag): record which path inside
+        // LoadTypeDefThrowing made typeHnd null before we throw the catch-
+        // all IDS_CLASSLOAD_GENERAL exception. fUninstantiated tells us
+        // whether the null was an explicit reject of an uninstantiated
+        // generic def (line 1977 above) or a real MT load failure.
+        SharpOSHost_DebugPrint("[LoadTypeDefThrowing→THROW] token=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)typeDef);
+        SharpOSHost_DebugPrint(" level=");
+        SharpOSHost_DebugPrintHex((uint64_t)level);
+        SharpOSHost_DebugPrint(" fUninst=");
+        SharpOSHost_DebugPrintHex((uint64_t)fUninstantiated);
+        SharpOSHost_DebugPrint(" pTargetInst=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)pTargetInstantiation);
+        SharpOSHost_DebugPrint("\n");
+#endif
         pModule->GetAssembly()->ThrowTypeLoadException(pModule->GetMDImport(),
                                                        typeDef,
                                                        IDS_CLASSLOAD_GENERAL);
@@ -3190,9 +3221,21 @@ ClassLoader::LoadTypeHandleForTypeKey_Body(
 
 retry:
     unresolvedClassLockHolder.Acquire();
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[LoadTypeKey_Body] shard=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pPendingTypeLoadShard);
+    SharpOSHost_DebugPrint(" hash=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)dwHashedTypeKey);
+    SharpOSHost_DebugPrint(" — calling FindPendingTypeLoadEntry\n");
+#endif
 
     // Is it in the hash of classes currently being loaded?
     pLoadingEntry = pPendingTypeLoadShard->FindPendingTypeLoadEntry(dwHashedTypeKey, *pTypeKey);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[LoadTypeKey_Body] Find returned pLoadingEntry=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(void*)pLoadingEntry);
+    SharpOSHost_DebugPrint("\n");
+#endif
     if (pLoadingEntry)
     {
         pLoadingEntry->AddRef();

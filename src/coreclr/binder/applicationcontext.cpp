@@ -180,10 +180,14 @@ namespace BINDER_SPACE
                 break;
             }
 
+#if !defined(TARGET_SHARPOS)
+            // SharpOS: UEFI-style `\sharpos\...` paths root-absolute. См.
+            // companion suppress в binder/utils.cpp GetNextTPAPath.
             if (Path::IsRelative(pathName))
             {
                 GO_WITH_HRESULT(E_INVALIDARG);
             }
+#endif
 
             m_platformResourceRoots.Append(pathName);
         }
@@ -203,10 +207,12 @@ namespace BINDER_SPACE
                 break;
             }
 
+#if !defined(TARGET_SHARPOS)
             if (Path::IsRelative(pathName))
             {
                 GO_WITH_HRESULT(E_INVALIDARG);
             }
+#endif
 
             m_appPaths.Append(pathName);
         }

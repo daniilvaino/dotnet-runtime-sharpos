@@ -19,6 +19,13 @@ extern "C"
 }
 #endif
 
+#if defined(TARGET_SHARPOS)
+// pal.h not pulled in on TARGET_SHARPOS — declare PAL_LOAD* we need.
+extern "C" void* PAL_LOADLoadPEFile(HANDLE hFile, size_t offset);
+extern "C" BOOL PAL_LOADUnloadPEFile(void* ptr);
+extern "C" BOOL PAL_LOADMarkSectionAsNotNeeded(void* ptr);
+#endif
+
 static bool AllowR2RForImage(PEImage* pOwner)
 {
     // Allow R2R for files
@@ -123,6 +130,18 @@ PEImageLayout* PEImageLayout::Load(PEImage* pOwner, HRESULT* loadFailure)
     STANDARD_VM_CONTRACT;
 
     bool disableMapping = CLRConfig::GetConfigValue(CLRConfig::INTERNAL_PELoader_DisableMapping);
+
+#if defined(TARGET_SHARPOS)
+    // SharpOS: our PAL_LOADLoadPEFile returns the raw FLAT file buffer (no
+    // section mapping — unlike real Unix PAL which mmaps sections at their
+    // RVAs). LoadedImageLayout would treat that flat buffer as mapped и
+    // PEDecoder::GetRvaData would do base+rva, reading wrong bytes for any
+    // section past the first → BFA_BAD_IL_RANGE (COR_E_BADIMAGEFORMAT) when
+    // JIT imports a method body. Forcing disableMapping routes file PEs
+    // through LoadConverted → FlatImageLayout, where IsMapped()==false и
+    // PEDecoder does proper RvaToOffset section translation on the flat buf.
+    disableMapping = true;
+#endif
 
     if (pOwner->IsFile())
     {
@@ -386,9 +405,9 @@ void PEImageLayout::ApplyBaseRelocations(bool relocationMustWriteCopy)
             ThrowLastError();
 #endif // __APPLE__ && HOST_ARM64
     }
-#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
+#if defined(TARGET_UNIX)
     PAL_LOADMarkSectionAsNotNeeded((void*)dir);
-#endif // TARGET_UNIX && !TARGET_SHARPOS
+#endif // TARGET_UNIX
 
     if (pFlushRegion != NULL)
     {
@@ -543,7 +562,7 @@ LoadedImageLayout::LoadedImageLayout(PEImage* pOwner, HRESULT* loadFailure)
     m_pOwner = pOwner;
     _ASSERTE(!pOwner->IsCompressed());
 
-#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
+#if !defined(TARGET_UNIX)
     _ASSERTE(!pOwner->IsInBundle());
     m_Module = CLRLoadLibraryEx(pOwner->GetPath(), NULL, GetLoadWithAlteredSearchPathFlag());
     if (m_Module == NULL)
@@ -604,13 +623,13 @@ LoadedImageLayout::LoadedImageLayout(PEImage* pOwner, HRESULT* loadFailure)
 #endif
 }
 
-#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
+#if !defined(TARGET_UNIX)
 LoadedImageLayout::LoadedImageLayout(PEImage* pOwner, HMODULE hModule)
 {
     m_pOwner = pOwner;
     PEDecoder::Init((void*)hModule, /* relocated */ true);
 }
-#endif // !TARGET_UNIX || TARGET_SHARPOS
+#endif // !TARGET_UNIX
 
 LoadedImageLayout::~LoadedImageLayout()
 {
@@ -622,10 +641,10 @@ LoadedImageLayout::~LoadedImageLayout()
     }
     CONTRACTL_END;
 
-#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
+#if !defined(TARGET_UNIX)
     if (m_Module)
         CLRFreeLibrary(m_Module);
-#endif // !TARGET_UNIX || TARGET_SHARPOS
+#endif // !TARGET_UNIX
 }
 
 FlatImageLayout::FlatImageLayout(PEImage* pOwner)
@@ -1229,7 +1248,7 @@ UNSUPPORTED:
 NativeImageLayout::NativeImageLayout(LPCWSTR fullPath)
 {
     PVOID loadedImage;
-#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
+#if defined(TARGET_UNIX)
     {
         HANDLE fileHandle = WszCreateFile(
             fullPath,

@@ -130,10 +130,9 @@ class LoadedImageLayout: public PEImageLayout
 {
     VPTR_VTABLE_CLASS(LoadedImageLayout,PEImageLayout)
 protected:
-// SharpOS port: PALPEFileHolder только на real TARGET_UNIX (gc/unix path),
-// не на TARGET_SHARPOS. На SHARPOS PE files статически линкуются в kernel image
-// — нет dynamic loader. Используем HINSTANCE как stub.
-#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
+// SharpOS port (Phase 6.1.b update): теперь используем Unix path
+// PAL_LOADLoadPEFile, так что PALPEFileHolder нужен и здесь.
+#if !defined(TARGET_UNIX)
     HINSTANCE m_Module;
 #else
     PALPEFileHolder m_LoadedFile;
@@ -141,9 +140,9 @@ protected:
 public:
 #ifndef DACCESS_COMPILE
     LoadedImageLayout(PEImage* pOwner, HRESULT* returnDontThrow);
-#if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
+#if !defined(TARGET_UNIX)
     LoadedImageLayout(PEImage* pOwner, HMODULE hModule);
-#endif // !TARGET_UNIX || TARGET_SHARPOS
+#endif // !TARGET_UNIX
     ~LoadedImageLayout();
 #endif // !DACCESS_COMPILE
 };

@@ -6,6 +6,11 @@
 
 #include "common.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
+
 #include "clsload.hpp"
 #include "method.hpp"
 #include "class.h"
@@ -3647,11 +3652,22 @@ void MethodTable::DoRunClassInitThrowing()
 
     ListLock *_pLock = pDomain->GetClassInitLock();
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[DoRunClassInit] pMT=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)this);
+    SharpOSHost_DebugPrint(" — acquiring pInitLock\n");
+#endif
     ListLockHolder pInitLock(_pLock);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[DoRunClassInit] pInitLock acquired\n");
+#endif
 
     // Check again
     if (IsClassInited())
         goto Exit;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[DoRunClassInit] not yet inited\n");
+#endif
 
     //
     // Handle cases where the .cctor has already tried to run but failed.
@@ -3750,13 +3766,27 @@ void MethodTable::DoRunClassInitThrowing()
 
     // Take the lock
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[DoRunClassInit] before ListLockEntry::Find\n");
+#endif
         //nontrivial holder, might take a lock in destructor
         ListLockEntryHolder pEntry(ListLockEntry::Find(pInitLock, this, description));
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[DoRunClassInit] Find returned pEntry=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(void*)pEntry);
+        SharpOSHost_DebugPrint("\n");
+#endif
 
         ListLockEntryLockHolder pLock(pEntry, FALSE);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[DoRunClassInit] pLock ctor done (no take)\n");
+#endif
 
         // We have a list entry, we can release the global lock now
         pInitLock.Release();
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[DoRunClassInit] pInitLock.Release done — calling DeadlockAwareAcquire\n");
+#endif
 
         if (pLock.DeadlockAwareAcquire())
         {

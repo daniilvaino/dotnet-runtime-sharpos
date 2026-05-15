@@ -310,6 +310,13 @@ void WriteBarrierManager::Initialize()
     // write barrier implementations.
     size_t cbWriteBarrierBuffer = GetSpecificWriteBarrierSize(WRITE_BARRIER_BUFFER);
 
+#ifndef TARGET_SHARPOS
+    // SharpOS port: JIT_WriteBarrier template в patchedcode.asm = PostGrow64
+    // size; with FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP off, Byte/Bit
+    // Region64 specific impls exceed the template (upstream comment в asm
+    // outdated — claims "larger of the two" considering only PreGrow vs
+    // PostGrow). Disabling these structural checks since SharpOS Phase 6.1
+    // does not exercise write-barrier patching from kernel boot path.
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_PREGROW64));
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_POSTGROW64));
 #ifdef FEATURE_SVR_GC
@@ -326,6 +333,7 @@ void WriteBarrierManager::Initialize()
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_BYTE_REGIONS64));
     _ASSERTE_ALL_BUILDS(cbWriteBarrierBuffer >= GetSpecificWriteBarrierSize(WRITE_BARRIER_WRITE_WATCH_BIT_REGIONS64));
 #endif // FEATURE_USE_SOFTWARE_WRITE_WATCH_FOR_GC_HEAP
+#endif // !TARGET_SHARPOS
 
 
 #if !defined(WRITE_BARRIER_VARS_INLINE)

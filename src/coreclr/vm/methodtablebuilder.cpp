@@ -16,6 +16,13 @@
 #include "customattribute.h"
 #include "typestring.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// SharpOS port (Phase 6.1.b diag): host-side serial print used by
+// LoadExactInterfaceMap entry trace.
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
+
 //*******************************************************************************
 // Helper functions to sort GCdescs by offset (decending order)
 int __cdecl compareCGCDescSeries(const void *arg1, const void *arg2)
@@ -9559,6 +9566,24 @@ MethodTableBuilder::LoadExactInterfaceMap(MethodTable *pMT)
     }
     CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // SharpOS port (Phase 6.1.b diag): announce entry so we know which
+    // type's interface map is being built when a downstream LoadTypeDef
+    // throws. m_pszDebugClassName needs DEBUG build of CoreCLR — Debug
+    // config sets _DEBUG, so available.
+    SharpOSHost_DebugPrint("[LoadExactInterfaceMap] pMT=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pMT);
+#ifdef _DEBUG
+    if (pMT && pMT->GetDebugClassName())
+    {
+        SharpOSHost_DebugPrint(" name='");
+        SharpOSHost_DebugPrint(pMT->GetDebugClassName());
+        SharpOSHost_DebugPrint("'");
+    }
+#endif
+    SharpOSHost_DebugPrint("\n");
+#endif
+
     BOOL hasInstantiatedInterfaces = FALSE;
     MethodTable::InterfaceMapIterator it = pMT->IterateInterfaceMap();
     while (it.Next())
@@ -9633,6 +9658,28 @@ MethodTableBuilder::LoadExactInterfaceMap(MethodTable *pMT)
         InterfaceImplEnum ie(pMT->GetModule(), pMT->GetCl(), NULL);
         while ((hr = ie.Next()) == S_OK)
         {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            // SharpOS port (Phase 6.1.b diag): announce each InterfaceImpl
+            // row token + decoded type (TypeDef vs TypeRef vs TypeSpec).
+            // Top byte of mdToken says type: 0x01=TypeRef, 0x02=TypeDef,
+            // 0x1B=TypeSpec. Bare TypeDef-as-interface (without TypeSpec
+            // for instantiation) с FailIfUninstDefOrRef + open generic →
+            // throw (the bug pattern we are chasing).
+            {
+                mdToken tok = ie.CurrentToken();
+                SharpOSHost_DebugPrint("  [InterfaceImpl] pMT=0x");
+                SharpOSHost_DebugPrintHex((uint64_t)pMT);
+                SharpOSHost_DebugPrint(" tok=0x");
+                SharpOSHost_DebugPrintHex((uint64_t)tok);
+                SharpOSHost_DebugPrint(" type=");
+                uint8_t tt = (uint8_t)((tok >> 24) & 0xFFu);
+                if      (tt == 0x02) SharpOSHost_DebugPrint("TypeDef");
+                else if (tt == 0x01) SharpOSHost_DebugPrint("TypeRef");
+                else if (tt == 0x1B) SharpOSHost_DebugPrint("TypeSpec");
+                else                 SharpOSHost_DebugPrint("OTHER");
+                SharpOSHost_DebugPrint("\n");
+            }
+#endif
             MethodTable *pNewIntfMT = ClassLoader::LoadTypeDefOrRefOrSpecThrowing(pMT->GetModule(),
                                                                                 ie.CurrentToken(),
                                                                                 &typeContext,

@@ -45,9 +45,15 @@ void* GetTlsIndexObjectAddress()
 }
 
 // vm/threads.cpp:71 — TARGET_UNIX path, C++ linkage.
+//
+// Async-safe map is a signal-handler-safe lookup used on Unix to find
+// the managed Thread* from an OS thread ID inside signal handlers. SharpOS
+// is single-threaded boot + no Unix signals → no map needed. Return true
+// so CoreCLR thinks the insert succeeded (otherwise EE fatal-errors
+// per threads.cpp:396).
 bool InsertThreadIntoAsyncSafeMap(uint64_t, void*)
 {
-    return false;
+    return true;
 }
 
 void RemoveThreadFromAsyncSafeMap(uint64_t, void*)
@@ -77,58 +83,114 @@ extern "C" void* SharpOSHost_HeapRealloc(void* /*old*/, size_t /*size*/) { retur
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) {}
 
-// Per-call trace: prints (caller, caller-of-caller, size). For malloc
-// the immediate caller is libcmtd's operator new (always the same address);
-// caller-of-caller is the CoreCLR site that did `new T()`.
-static inline void trace_call_2(const char* fn, uint64_t caller, uint64_t caller2, uint64_t arg1)
+// ---------------------------------------------------------------------------
+// PAL_LOAD* — Unix-style PE loader entry points.
+//
+// vm/peimagelayout.cpp's TARGET_UNIX path (now enabled для SharpOS) calls
+// PAL_LOADLoadPEFile(hFile, offset) to obtain a pointer to the mapped PE
+// image base. CoreCLR opens the file через CreateFileW (routed к
+// SharpOSHost_FileOpen → FileState* in-memory buffer), then passes that
+// HANDLE here.
+//
+// FileState layout (from SharpOSHost/CrtHeapStubs.cs):
+//   +0x00: void* Buffer
+//   +0x08: uint32_t Size
+//   +0x0C: uint32_t Position
+//
+// Lives в coreclrpal.lib (used by BOTH kernel link AND coreclr.dll smoke
+// target) — kernel CRT lib (coreclrpal_kernel_crt) is excluded from smoke
+// link, so PAL_LOAD* must live elsewhere. Smoke target never exercises
+// PE load paths at runtime, so functional behaviour is for the kernel
+// build only.
+// ---------------------------------------------------------------------------
+extern "C" void* PAL_LOADLoadPEFile(HANDLE hFile, size_t offset)
 {
+    if (hFile == nullptr || hFile == (HANDLE)(intptr_t)-1) return nullptr;
+    void* buf = *(void**)((char*)hFile + 0x00);
+    uint32_t size = *(uint32_t*)((char*)hFile + 0x08);
+    if (offset >= size) return nullptr;
+    return (char*)buf + offset;
+}
+
+extern "C" BOOL PAL_LOADUnloadPEFile(void* /*ptr*/)
+{
+    // No-op — GC reclaims the FileState и its buffer when handle is dropped.
+    return TRUE;
+}
+
+extern "C" BOOL PAL_LOADMarkSectionAsNotNeeded(void* /*ptr*/)
+{
+    // Hint that a PE section's pages are no longer needed (e.g. reloc table
+    // after relocations applied). No-op for us — memory stays committed
+    // until GC sweep.
+    return TRUE;
+}
+
+// Per-call trace: one serial line per heap op.
+//   [crt] <fn>(0x<arg>) c1=0x<caller> c2=0x<caller2> => 0x<result>
+// c1 is the immediate caller (typically libcmtd's operator new for malloc),
+// c2 is the caller-of-caller (the CoreCLR site that did `new T()`).
+//
+// SHARPOS_HEAP_TRACE=1 — print every call (verbose, baseline debugging).
+// SHARPOS_HEAP_TRACE=0 — silent (when chasing higher-level events like
+// TypeLoad/EH where per-malloc noise drowns the signal).
+#ifndef SHARPOS_HEAP_TRACE
+#define SHARPOS_HEAP_TRACE 0
+#endif
+static inline void trace_heap_call(const char* fn, uint64_t caller, uint64_t caller2,
+                                   uint64_t arg, uint64_t result)
+{
+#if SHARPOS_HEAP_TRACE
     SharpOSHost_DebugPrint("[crt] ");
     SharpOSHost_DebugPrint(fn);
     SharpOSHost_DebugPrint("(0x");
-    SharpOSHost_DebugPrintHex(arg1);
+    SharpOSHost_DebugPrintHex(arg);
     SharpOSHost_DebugPrint(") c1=0x");
     SharpOSHost_DebugPrintHex(caller);
     SharpOSHost_DebugPrint(" c2=0x");
     SharpOSHost_DebugPrintHex(caller2);
+    SharpOSHost_DebugPrint(" => 0x");
+    SharpOSHost_DebugPrintHex(result);
     SharpOSHost_DebugPrint("\n");
+#else
+    (void)fn; (void)caller; (void)caller2; (void)arg; (void)result;
+#endif
 }
 
 extern "C" void* malloc(size_t size)
 {
-    trace_call_2("malloc",
-        (uint64_t)__builtin_return_address(0),
-        (uint64_t)__builtin_return_address(1),
-        size);
-    return SharpOSHost_HeapAlloc(size);
+    uint64_t c1 = (uint64_t)__builtin_return_address(0);
+    uint64_t c2 = (uint64_t)__builtin_return_address(1);
+    void* p = SharpOSHost_HeapAlloc(size);
+    trace_heap_call("malloc", c1, c2, size, (uint64_t)p);
+    return p;
 }
 extern "C" void  free(void* p)
 {
-    trace_call_2("free",
-        (uint64_t)__builtin_return_address(0),
-        (uint64_t)__builtin_return_address(1),
-        (uint64_t)p);
+    uint64_t c1 = (uint64_t)__builtin_return_address(0);
+    uint64_t c2 = (uint64_t)__builtin_return_address(1);
     SharpOSHost_HeapFree(p);
+    trace_heap_call("free", c1, c2, (uint64_t)p, 0);
 }
 extern "C" void* realloc(void* old, size_t s)
 {
-    trace_call_2("realloc",
-        (uint64_t)__builtin_return_address(0),
-        (uint64_t)__builtin_return_address(1),
-        s);
-    return SharpOSHost_HeapRealloc(old, s);
+    uint64_t c1 = (uint64_t)__builtin_return_address(0);
+    uint64_t c2 = (uint64_t)__builtin_return_address(1);
+    void* p = SharpOSHost_HeapRealloc(old, s);
+    trace_heap_call("realloc", c1, c2, s, (uint64_t)p);
+    return p;
 }
 extern "C" void* calloc(size_t n, size_t sz)
 {
     size_t total = n * sz;
-    trace_call_2("calloc",
-        (uint64_t)__builtin_return_address(0),
-        (uint64_t)__builtin_return_address(1),
-        total);
+    uint64_t c1 = (uint64_t)__builtin_return_address(0);
+    uint64_t c2 = (uint64_t)__builtin_return_address(1);
     void* p = SharpOSHost_HeapAlloc(total);
     if (p) {
         char* c = (char*)p;
         for (size_t i = 0; i < total; i++) c[i] = 0;
     }
+    trace_heap_call("calloc", c1, c2, total, (uint64_t)p);
     return p;
 }
 

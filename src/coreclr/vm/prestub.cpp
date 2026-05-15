@@ -13,6 +13,11 @@
 #include "common.h"
 #include "vars.hpp"
 #include "eeconfig.h"
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
 #include "dllimport.h"
 #include "comdelegate.h"
 #include "dbginterface.h"
@@ -593,8 +598,26 @@ PCODE MethodDesc::JitCompileCode(PrepareCodeConfig* pConfig)
 
     PCODE pCode = (PCODE)NULL;
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        {
+            const char* cn = GetMethodTable()->GetDebugClassName();
+            const char* mn = m_pszDebugMethodName;
+            SharpOSHost_DebugPrint("[prestub] JIT method=");
+            SharpOSHost_DebugPrint(cn ? cn : "<null>");
+            SharpOSHost_DebugPrint("::");
+            SharpOSHost_DebugPrint(mn ? mn : "<null>");
+            SharpOSHost_DebugPrint(IsILStub() ? " [ILStub]" : "");
+            SharpOSHost_DebugPrint(IsPInvoke() ? " [PInvoke]" : "");
+            SharpOSHost_DebugPrint(IsFCall() ? " [FCall]" : "");
+            SharpOSHost_DebugPrint("\n");
+        }
+        SharpOSHost_DebugPrint("[prestub] entering JIT-lock scope\n");
+#endif
         // Enter the global lock which protects the list of all functions being JITd
         JitListLock::LockHolder pJitLock(AppDomain::GetCurrentDomain()->GetJitLock());
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[prestub] JIT-lock acquired\n");
+#endif
 
         // It is possible that another thread stepped in before we entered the global lock for the first time.
         if ((pCode = pConfig->IsJitCancellationRequested()))
@@ -606,18 +629,35 @@ PCODE MethodDesc::JitCompileCode(PrepareCodeConfig* pConfig)
 
         const char *description = "jit lock";
         INDEBUG(description = m_pszDebugMethodName;)
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[prestub] before JitListLockEntry::Find\n");
+#endif
         ReleaseHolder<JitListLockEntry> pEntry(JitListLockEntry::Find(
             pJitLock, version, description));
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[prestub] after JitListLockEntry::Find pEntry=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(void*)pEntry);
+        SharpOSHost_DebugPrint("\n");
+#endif
 
         // We have an entry now, we can release the global lock
         pJitLock.Release();
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[prestub] pJitLock.Release done\n");
+#endif
 
         // Take the entry lock
         {
             JitListLockEntry::LockHolder pEntryLock(pEntry, FALSE);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOSHost_DebugPrint("[prestub] pEntryLock ctor done — calling DeadlockAwareAcquire\n");
+#endif
 
             if (pEntryLock.DeadlockAwareAcquire())
             {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+                SharpOSHost_DebugPrint("[prestub] DeadlockAwareAcquire returned TRUE\n");
+#endif
                 if (pEntry->m_hrResultCode == S_FALSE)
                 {
                     // Nobody has jitted the method yet
