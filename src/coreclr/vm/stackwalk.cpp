@@ -534,9 +534,29 @@ PCODE Thread::VirtualUnwindCallFrame(T_CONTEXT* pContext,
     }
 #endif // !TARGET_UNIX && TARGET_ARM64
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // Bare metal: native coreclr frames (IL_Throw / DispatchManagedException
+    // on the first-pass managed-throw walk) are NOT owned by any
+    // ExecutionManager RangeSection — coreclr is not a registered module,
+    // it is statically linked into the kernel image. So EECodeInfo::Init()
+    // takes its Invalid path (FindCodeRange == NULL) and m_pJM stays NULL;
+    // pCodeInfo->GetFunctionEntry() then dereferences NULL → `call 0` →
+    // #PF RIP=0 (the managed-throw wall). An Invalid EECodeInfo means
+    // "not managed code we own" → unwind it as a native frame via
+    // RtlLookupFunctionEntry (C# SehUnwind, kernel-image static .pdata,
+    // which covers the linked-in coreclr native code).
+    if (pCodeInfo == NULL || !pCodeInfo->IsValid())
+#else
     if (pCodeInfo == NULL)
+#endif
     {
-#ifndef TARGET_UNIX
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // SharpOS defines TARGET_UNIX (PAL-shaped), so the !TARGET_UNIX
+        // RtlLookupFunctionEntry path is compiled out and the TARGET_UNIX
+        // fallback's local EECodeInfo Invalid-paths for native PCs (same
+        // `call 0`). Call the C# SehUnwind RtlLookupFunctionEntry directly.
+        pFunctionEntry = RtlLookupFunctionEntry(uControlPc, &uImageBase, NULL);
+#elif !defined(TARGET_UNIX)
         pFunctionEntry = RtlLookupFunctionEntry(uControlPc,
                                             ARM_ONLY((DWORD*))(&uImageBase),
                                             NULL);

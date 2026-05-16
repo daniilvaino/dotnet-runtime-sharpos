@@ -15,10 +15,49 @@
 
 #include "rtlfunctions.h"
 
+#if defined(TARGET_SHARPOS)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+// __imp_RtlVirtualUnwind is the resolvable data pointer emitted by
+// CRT_STUB(RtlVirtualUnwind) in crt_imp_stubs.cpp; at the final kernel
+// image link (/FORCE:MULTIPLE, OS.obj first) it points to the C#
+// [RuntimeExport] RtlVirtualUnwind (SehUnwind.cs). Links standalone for
+// coreclr.dll, no winnt.h prototype collision (it's the data alias).
+extern "C" void* __imp_RtlVirtualUnwind;
+#endif
+
 
 #ifdef HOST_AMD64
 
+#if defined(TARGET_SHARPOS)
+// Bare metal: the EnsureRtlFunctions() call site in EEStartupHelper
+// (ceemain.cpp:761, #ifndef TARGET_UNIX) is NOT on the SharpOS
+// coreclr_initialize path — verified empirically: with Verbose on, the
+// [InstallEEFunctionTable] marker (same TU) fires but [EnsureRtlFunctions]
+// never does. So the runtime rebind in EnsureRtlFunctions() below never
+// executes; RtlVirtualUnwind_Unsafe would stay NULL and the first managed
+// `throw` does `call 0` → #PF RIP=0 (instr-fetch). Bind it STATICALLY:
+// &SharpOS_RtlVirtualUnwind_Thunk is a link-time constant, so the pointer
+// is correct in .data from image load — no dependency on EEStartup
+// ordering, ntdll, GetProcAddress, or C++ dynamic initializers. The thunk
+// forwards through __imp_RtlVirtualUnwind (itself a static .data alias to
+// the in-image C# [RuntimeExport] RtlVirtualUnwind, SehUnwind.cs — proven
+// working by the kernel EH battery L1..L17), dereferenced at call time
+// when an unwind actually happens (image fully loaded by then).
+static PEXCEPTION_ROUTINE SharpOS_RtlVirtualUnwind_Thunk(
+    ULONG HandlerType, ULONG64 ImageBase, ULONG64 ControlPc,
+    PT_RUNTIME_FUNCTION FunctionEntry, PCONTEXT ContextRecord,
+    PVOID* HandlerData, PULONG64 EstablisherFrame,
+    PKNONVOLATILE_CONTEXT_POINTERS ContextPointers)
+{
+    return ((RtlVirtualUnwindFn*)__imp_RtlVirtualUnwind)(
+        HandlerType, ImageBase, ControlPc, FunctionEntry, ContextRecord,
+        HandlerData, EstablisherFrame, ContextPointers);
+}
+RtlVirtualUnwindFn*                 RtlVirtualUnwind_Unsafe         = (RtlVirtualUnwindFn*)&SharpOS_RtlVirtualUnwind_Thunk;
+#else
 RtlVirtualUnwindFn*                 RtlVirtualUnwind_Unsafe         = NULL;
+#endif
 
 HRESULT EnsureRtlFunctions()
 {
@@ -29,6 +68,19 @@ HRESULT EnsureRtlFunctions()
         MODE_ANY;
     }
     CONTRACTL_END;
+
+#if defined(TARGET_SHARPOS)
+    // Redundant belt-and-suspenders: RtlVirtualUnwind_Unsafe is already
+    // bound STATICALLY at file scope (SharpOS_RtlVirtualUnwind_Thunk, see
+    // above) because this function is not reached on the SharpOS
+    // coreclr_initialize path. We keep the rebind + probe print here so
+    // that IF the startup path ever changes to include EEStartupHelper's
+    // EnsureRtlFunctions() call, the marker confirms it and the value is
+    // re-asserted (idempotent — same in-image C# RtlVirtualUnwind).
+    RtlVirtualUnwind_Unsafe = (RtlVirtualUnwindFn*)__imp_RtlVirtualUnwind;
+    SharpOSHost_DebugPrint("[EnsureRtlFunctions] RtlVirtualUnwind_Unsafe bound via __imp_ (SHARPOS)\n");
+    return S_OK;
+#endif
 
     HMODULE hModuleNtDll = CLRLoadLibrary(W("ntdll"));
 
@@ -74,6 +126,34 @@ VOID InstallEEFunctionTable (
         PRECONDITION(cbRange <= DYNAMIC_FUNCTION_TABLE_MAX_RANGE);
     }
     CONTRACTL_END;
+
+#if defined(TARGET_SHARPOS)
+    // Unambiguous marker: proves this function is actually reached (i.e.
+    // a JIT code heap is being registered) regardless of which slice of
+    // the serial log is captured. Low-frequency (once per code heap).
+    SharpOSHost_DebugPrint("[InstallEEFunctionTable] start=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pvStartRange);
+    SharpOSHost_DebugPrint(" len=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)cbRange);
+    SharpOSHost_DebugPrint("\n");
+
+    // Bare metal: there is no CLR module file path, so GetClrModuleDirectory
+    // throws — and that throw (inside this function) means the JIT code-heap
+    // function table is NEVER registered, so managed exceptions can't unwind
+    // through JIT frames. wszModuleName is only the out-of-process debugger
+    // callback DLL (irrelevant in-process), so register directly with NULL.
+    if (!RtlInstallFunctionTableCallback(
+            ((ULONG_PTR)pvTableID) | 3,
+            (ULONG_PTR)pvStartRange,
+            cbRange,
+            pfnGetRuntimeFunctionCallback,
+            pvContext,
+            NULL))
+    {
+        COMPlusThrowOM();
+    }
+    return;
+#endif
 
     static LPWSTR wszModuleName = NULL;
 

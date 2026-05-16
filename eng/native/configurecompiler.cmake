@@ -77,7 +77,25 @@ if (MSVC)
   define_property(TARGET PROPERTY CLR_EH_OPTION INHERITED BRIEF_DOCS "Defines the value of the /EH option" FULL_DOCS "Set this property to one of the valid /EHxx options (/EHa, /EHsc, /EHa-, ...)")
   define_property(TARGET PROPERTY MSVC_WARNING_LEVEL INHERITED BRIEF_DOCS "Define the warning level for the /Wn option" FULL_DOCS "Set this property to one of the valid /Wn options (/W0, /W1, /W2, /W3, /W4)")
 
-  set_property(GLOBAL PROPERTY CLR_CONTROL_FLOW_GUARD ON)
+  # SharpOS port: Control Flow Guard is a Windows *userland* exploit
+  # mitigation. /guard:cf makes the compiler route every indirect call
+  # through __guard_dispatch_icall_fptr (a pointer slot in .rdata); the NT
+  # loader + ntdll patch that slot at module load to the CFG validator
+  # (or to __guard_dispatch_icall_nop). A bare-metal unikernel has NO
+  # loader, so the slot stays 0 and the first CFG-guarded indirect call
+  # becomes `call 0` → #PF RIP=0 (instr-fetch). Observed exactly this on
+  # the managed-throw stackwalk: EECodeInfo::GetFunctionEntry()
+  # (jitinterface.cpp:15141) emits `mov r8,[rip+__guard_dispatch_icall_fptr]
+  # / call *r8` for the m_pJM->LazyGetFunctionEntry virtual dispatch — the
+  # real target is computed correctly in rax, but r8 (the dispatch pointer)
+  # is 0. CFG also has zero value here (no loader ASLR, no untrusted
+  # in-process modules). Disable it for the SharpOS build only; stock
+  # Windows/Unix builds keep it ON.
+  if (CLR_CMAKE_TARGET_SHARPOS)
+    set_property(GLOBAL PROPERTY CLR_CONTROL_FLOW_GUARD OFF)
+  else()
+    set_property(GLOBAL PROPERTY CLR_CONTROL_FLOW_GUARD ON)
+  endif()
 
   # Remove the /EHsc from the CXX flags so that the compile options are the only source of truth for that
   string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")

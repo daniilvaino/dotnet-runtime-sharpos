@@ -36,6 +36,9 @@ extern "C" __attribute__((weak)) void SharpOSHost_Panic(const char* /*msg*/) {}
 extern "C" __attribute__((weak)) void* SharpOSHost_HeapAlloc(size_t /*size*/) { return nullptr; }
 extern "C" __attribute__((weak)) void  SharpOSHost_HeapFree(void* /*ptr*/) {}
 extern "C" __attribute__((weak)) void  SharpOSHost_CreateGuid(void* /*guid16*/) {}
+extern "C" __attribute__((weak)) void  SharpOSHost_FillRandom(void* /*buf*/, int /*n*/) {}
+extern "C" __attribute__((weak)) void  SharpOSHost_RegisterStaticFunctionTable(
+    uint64_t /*base*/, void* /*funcTable*/, uint32_t /*count*/) {}
 extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetFullPathName(const wchar_t* /*in*/, uint32_t /*nBuf*/, wchar_t* /*out*/) { return 0; }
 extern "C" __attribute__((weak)) void* SharpOSHost_FileOpen(const wchar_t* /*path*/) { return nullptr; }
 extern "C" __attribute__((weak)) int SharpOSHost_FileRead(void* /*h*/, void* /*buf*/, uint32_t /*n*/, uint32_t* /*read*/) { return 0; }
@@ -93,40 +96,21 @@ CRT_STUB(_wcsicmp)
 // _wcstoui64 — real impl below (GC config INT parse: HeapHardLimit etc.)
 CRT_STUB(_wfopen)
 // _write — real impl below (POSIX write to fd; surfaces fd 1/2 to console)
-CRT_STUB(acos)
-CRT_STUB(acosf)
-CRT_STUB(acosh)
-CRT_STUB(acoshf)
-CRT_STUB(asin)
-CRT_STUB(asinf)
-CRT_STUB(asinh)
-CRT_STUB(asinhf)
-CRT_STUB(atan)
-CRT_STUB(atan2)
-CRT_STUB(atan2f)
-CRT_STUB(atanf)
-CRT_STUB(atanh)
-CRT_STUB(atanhf)
+// acos..tanh, ceil/floor/fmod/trunc/log*/exp*/pow*/sin*/cos*/sqrt* —
+// compact libm below (non-fatal: trap-stub panicked the BCL on first
+// internal call, e.g. `log` during string/Number init). Algebraic ones
+// exact; transcendental ~1e-9. Real high-accuracy libm is a later pillar.
+// acos acosf acosh acoshf — libm below
+// asin asinf asinh asinhf — libm below
+// atan atan2 atan2f atanf atanh atanhf — libm below
 CRT_STUB(atoi)
 CRT_STUB(atol)
 CRT_STUB(bsearch)
-CRT_STUB(cbrt)
-CRT_STUB(cbrtf)
-CRT_STUB(ceil)
-CRT_STUB(ceilf)
-CRT_STUB(cos)
-CRT_STUB(cosf)
-CRT_STUB(cosh)
-CRT_STUB(coshf)
-CRT_STUB(exp)
-CRT_STUB(expf)
+// cbrt cbrtf ceil ceilf cos cosf cosh coshf exp expf — libm below
 CRT_STUB(fclose)
 // fflush — real impl below (no-op)
 CRT_STUB(fgets)
-CRT_STUB(floor)
-CRT_STUB(floorf)
-CRT_STUB(fmod)
-CRT_STUB(fmodf)
+// floor floorf fmod fmodf — libm below
 CRT_STUB(fopen)
 CRT_STUB(fopen_s)
 // fputs — real impl below (surface to console)
@@ -134,42 +118,25 @@ CRT_STUB(fseek)
 CRT_STUB(ftell)
 // fwrite — real impl below (surface to console)
 CRT_STUB(getenv)
-CRT_STUB(ilogbf)
+// ilogbf — libm below
 // isalpha/isdigit/isprint/isspace/iswprint/iswspace/iswupper — real impls below
 // towlower — real impl below
 CRT_STUB(ldiv)
-CRT_STUB(log)
-CRT_STUB(log10)
-CRT_STUB(log10f)
-CRT_STUB(log2)
-CRT_STUB(log2f)
-CRT_STUB(logf)
-CRT_STUB(modf)
-CRT_STUB(modff)
+// log log10 log10f log2 log2f logf modf modff — libm below
 CRT_STUB(perror)
-CRT_STUB(pow)
-CRT_STUB(powf)
+// pow powf — libm below
 // qsort — real impl below (Lomuto-partition recursive qsort).
 CRT_STUB(setvbuf)
-CRT_STUB(sin)
-CRT_STUB(sinf)
-CRT_STUB(sinh)
-CRT_STUB(sinhf)
-CRT_STUB(sqrt)
-CRT_STUB(sqrtf)
+// sin sinf sinh sinhf sqrt sqrtf — libm below
 // strlen / strnlen / strcmp / strncmp / strcpy / strncpy / strcpy_s /
 // strncpy_s / strcat / strcat_s / strncat_s / strpbrk — real impls below
 CRT_STUB(strtod)
 CRT_STUB(strtok_s)
 CRT_STUB(strtoul)
 // strtoull — real impl below (shared sharpos_str2u64 with _wcstoui64)
-CRT_STUB(tan)
-CRT_STUB(tanf)
-CRT_STUB(tanh)
-CRT_STUB(tanhf)
+// tan tanf tanh tanhf — libm below
 // towlower — real impl below
-CRT_STUB(trunc)
-CRT_STUB(truncf)
+// trunc truncf — libm below
 // wcslen / wcsnlen / wcscmp / wcsncmp / wcscpy_s / wcsncpy_s /
 // wcscat_s / wcsncat_s — real impls below
 CRT_STUB(wcstoul)
@@ -321,6 +288,144 @@ CRT_STUB(WriteFile)
 //
 // Macro for symbol pair: function NAME + __imp_NAME data pointing to it.
 #define CRT_REAL(NAME) extern "C" void* __imp_##NAME = (void*)&NAME
+
+// ─── Compact libm (non-fatal replacement for the trap-stubs) ────────────
+// CoreCLR/BCL calls C math internally (e.g. `log` during string/Number
+// init) — the trap-stub panicked. Algebraic fns exact; transcendental
+// ~1e-9 (exp/log), sin/cos single-const reduction (fine for typical
+// args). NOT a high-accuracy libm — that's a later pillar; this just
+// keeps real programs running for the coverage map.
+namespace {
+union DBits { double d; unsigned long long u; };
+static double lm_trunc(double x){
+    if(x!=x) return x;
+    if(!(x>-9.007199254740992e15 && x<9.007199254740992e15)) return x;
+    long long i=(long long)x; return (double)i;
+}
+static double lm_floor(double x){ double t=lm_trunc(x); return (t>x)?t-1.0:t; }
+static double lm_ceil (double x){ double t=lm_trunc(x); return (t<x)?t+1.0:t; }
+static double lm_fabs (double x){ DBits v; v.d=x; v.u&=0x7FFFFFFFFFFFFFFFULL; return v.d; }
+static double lm_fmod (double x,double y){ if(y==0.0) return (x-x)/(y-y); return x - lm_trunc(x/y)*y; }
+static double lm_ldexp(double x,int e){
+    if(x==0.0||x!=x) return x; DBits v; v.d=x;
+    long long ex=(long long)((v.u>>52)&0x7FF)+e;
+    if(ex<=0) return x*0.0; if(ex>=0x7FF) return x*1e308*1e308;
+    v.u=(v.u & ~(0x7FFULL<<52)) | ((unsigned long long)ex<<52); return v.d;
+}
+static double lm_exp(double x){
+    if(x!=x) return x;
+    if(x>709.78) return 1e308*1e308; if(x<-745.13) return 0.0;
+    double k=lm_trunc(x*1.4426950408889634 + (x>=0?0.5:-0.5));
+    double r=x - k*0.6931471805599453;
+    double p=1.0+r*(1.0+r*(0.5+r*(0.16666666666666666+r*(0.041666666666666664
+            +r*(0.008333333333333333+r*0.001388888888888889)))));
+    return lm_ldexp(p,(int)k);
+}
+static double lm_log(double x){
+    if(x!=x) return x;
+    if(x<0.0) return (x-x)/0.0;
+    if(x==0.0) return -1e308*1e308;
+    DBits v; v.d=x;
+    long long e=(long long)((v.u>>52)&0x7FF)-1023;
+    v.u=(v.u & 0x000FFFFFFFFFFFFFULL) | (1023ULL<<52);
+    double f=v.d; if(f>1.4142135623730951){ f*=0.5; e+=1; }
+    double t=(f-1.0)/(f+1.0), t2=t*t;
+    double s=2.0*t*(1.0+t2*(0.3333333333333333+t2*(0.2+t2*(0.14285714285714285
+            +t2*(0.1111111111111111+t2*0.09090909090909091)))));
+    return (double)e*0.6931471805599453 + s;
+}
+static double lm_pow(double x,double y){
+    if(y==0.0||x==1.0) return 1.0;
+    if(x==0.0) return (y>0.0)?0.0:1e308*1e308;
+    if(x>0.0) return lm_exp(y*lm_log(x));
+    double yt=lm_trunc(y); if(yt!=y) return (x-x)/0.0;
+    double m=lm_exp(y*lm_log(-x)); return ((long long)yt & 1)? -m : m;
+}
+static void lm_sc(double x,double*ps,double*pc){
+    double k=lm_trunc(x*0.6366197723675814 + (x>=0?0.5:-0.5));
+    double r=x - k*1.5707963267948966, r2=r*r;
+    double s=r*(1.0+r2*(-0.16666666666666666+r2*(0.008333333333333333
+            +r2*(-0.0001984126984126984+r2*2.755731922398589e-06))));
+    double c=1.0+r2*(-0.5+r2*(0.041666666666666664
+            +r2*(-0.001388888888888889+r2*2.48015873015873e-05)));
+    long long q=((long long)k)&3; if(q<0) q+=4;
+    switch(q){ case 0:*ps=s;*pc=c;break; case 1:*ps=c;*pc=-s;break;
+               case 2:*ps=-s;*pc=-c;break; default:*ps=-c;*pc=s;break; }
+}
+static double lm_sin(double x){ double s,c; lm_sc(x,&s,&c); return s; }
+static double lm_cos(double x){ double s,c; lm_sc(x,&s,&c); return c; }
+static double lm_tan(double x){ double s,c; lm_sc(x,&s,&c); return s/c; }
+static double lm_sqrt(double x){ return __builtin_sqrt(x); }
+static double lm_atan(double x){
+    int neg=0,inv=0; if(x<0){x=-x;neg=1;} if(x>1.0){x=1.0/x;inv=1;}
+    double x2=x*x;
+    double a=x*(1.0+x2*(-0.3333333333333333+x2*(0.2+x2*(-0.14285714285714285
+            +x2*(0.1111111111111111+x2*(-0.09090909090909091+x2*0.07692307692))))));
+    if(inv) a=1.5707963267948966-a; return neg?-a:a;
+}
+static double lm_asin(double x){ if(x>=1.0)return 1.5707963267948966; if(x<=-1.0)return -1.5707963267948966; return lm_atan(x/lm_sqrt(1.0-x*x)); }
+static double lm_acos(double x){ return 1.5707963267948966 - lm_asin(x); }
+static double lm_atan2(double y,double x){
+    if(x>0.0) return lm_atan(y/x);
+    if(x<0.0) return lm_atan(y/x) + (y>=0.0?3.141592653589793:-3.141592653589793);
+    return (y>0.0)?1.5707963267948966:(y<0.0?-1.5707963267948966:0.0);
+}
+static double lm_sinh(double x){ double e=lm_exp(x); return (e-1.0/e)*0.5; }
+static double lm_cosh(double x){ double e=lm_exp(x); return (e+1.0/e)*0.5; }
+static double lm_tanh(double x){ if(x>20.0)return 1.0; if(x<-20.0)return -1.0; double e=lm_exp(2.0*x); return (e-1.0)/(e+1.0); }
+static double lm_cbrt(double x){ if(x==0.0)return 0.0; double s=x<0?-1.0:1.0; return s*lm_exp(lm_log(s*x)*0.3333333333333333); }
+}
+extern "C" double trunc (double x){ return lm_trunc(x); }   CRT_REAL(trunc);
+extern "C" double floor (double x){ return lm_floor(x); }   CRT_REAL(floor);
+extern "C" double ceil  (double x){ return lm_ceil(x);  }   CRT_REAL(ceil);
+extern "C" double fmod  (double x,double y){ return lm_fmod(x,y);} CRT_REAL(fmod);
+extern "C" double exp   (double x){ return lm_exp(x);   }   CRT_REAL(exp);
+extern "C" double log   (double x){ return lm_log(x);   }   CRT_REAL(log);
+extern "C" double log2  (double x){ return lm_log(x)*1.4426950408889634; } CRT_REAL(log2);
+extern "C" double log10 (double x){ return lm_log(x)*0.4342944819032518; } CRT_REAL(log10);
+extern "C" double pow   (double x,double y){ return lm_pow(x,y);} CRT_REAL(pow);
+extern "C" double sin   (double x){ return lm_sin(x);   }   CRT_REAL(sin);
+extern "C" double cos   (double x){ return lm_cos(x);   }   CRT_REAL(cos);
+extern "C" double tan   (double x){ return lm_tan(x);   }   CRT_REAL(tan);
+extern "C" double sqrt  (double x){ return lm_sqrt(x);  }   CRT_REAL(sqrt);
+extern "C" double atan  (double x){ return lm_atan(x);  }   CRT_REAL(atan);
+extern "C" double atan2 (double y,double x){ return lm_atan2(y,x);} CRT_REAL(atan2);
+extern "C" double asin  (double x){ return lm_asin(x);  }   CRT_REAL(asin);
+extern "C" double acos  (double x){ return lm_acos(x);  }   CRT_REAL(acos);
+extern "C" double sinh  (double x){ return lm_sinh(x);  }   CRT_REAL(sinh);
+extern "C" double cosh  (double x){ return lm_cosh(x);  }   CRT_REAL(cosh);
+extern "C" double tanh  (double x){ return lm_tanh(x);  }   CRT_REAL(tanh);
+extern "C" double cbrt  (double x){ return lm_cbrt(x);  }   CRT_REAL(cbrt);
+extern "C" double acosh (double x){ return lm_log(x+lm_sqrt(x*x-1.0)); } CRT_REAL(acosh);
+extern "C" double asinh (double x){ return lm_log(x+lm_sqrt(x*x+1.0)); } CRT_REAL(asinh);
+extern "C" double atanh (double x){ return 0.5*lm_log((1.0+x)/(1.0-x)); } CRT_REAL(atanh);
+extern "C" double modf  (double x,double* ip){ double t=lm_trunc(x); *ip=t; return x-t; } CRT_REAL(modf);
+extern "C" float  truncf(float x){ return (float)lm_trunc(x); }   CRT_REAL(truncf);
+extern "C" float  floorf(float x){ return (float)lm_floor(x); }   CRT_REAL(floorf);
+extern "C" float  ceilf (float x){ return (float)lm_ceil(x);  }   CRT_REAL(ceilf);
+extern "C" float  fmodf (float x,float y){ return (float)lm_fmod(x,y);} CRT_REAL(fmodf);
+extern "C" float  expf  (float x){ return (float)lm_exp(x);   }   CRT_REAL(expf);
+extern "C" float  logf  (float x){ return (float)lm_log(x);   }   CRT_REAL(logf);
+extern "C" float  log2f (float x){ return (float)(lm_log(x)*1.4426950408889634); } CRT_REAL(log2f);
+extern "C" float  log10f(float x){ return (float)(lm_log(x)*0.4342944819032518); } CRT_REAL(log10f);
+extern "C" float  powf  (float x,float y){ return (float)lm_pow(x,y);} CRT_REAL(powf);
+extern "C" float  sinf  (float x){ return (float)lm_sin(x);   }   CRT_REAL(sinf);
+extern "C" float  cosf  (float x){ return (float)lm_cos(x);   }   CRT_REAL(cosf);
+extern "C" float  tanf  (float x){ return (float)lm_tan(x);   }   CRT_REAL(tanf);
+extern "C" float  sqrtf (float x){ return (float)lm_sqrt(x);  }   CRT_REAL(sqrtf);
+extern "C" float  atanf (float x){ return (float)lm_atan(x);  }   CRT_REAL(atanf);
+extern "C" float  atan2f(float y,float x){ return (float)lm_atan2(y,x);} CRT_REAL(atan2f);
+extern "C" float  asinf (float x){ return (float)lm_asin(x);  }   CRT_REAL(asinf);
+extern "C" float  acosf (float x){ return (float)lm_acos(x);  }   CRT_REAL(acosf);
+extern "C" float  sinhf (float x){ return (float)lm_sinh(x);  }   CRT_REAL(sinhf);
+extern "C" float  coshf (float x){ return (float)lm_cosh(x);  }   CRT_REAL(coshf);
+extern "C" float  tanhf (float x){ return (float)lm_tanh(x);  }   CRT_REAL(tanhf);
+extern "C" float  cbrtf (float x){ return (float)lm_cbrt(x);  }   CRT_REAL(cbrtf);
+extern "C" float  acoshf(float x){ return (float)lm_log(x+lm_sqrt(x*x-1.0)); } CRT_REAL(acoshf);
+extern "C" float  asinhf(float x){ return (float)lm_log(x+lm_sqrt(x*x+1.0)); } CRT_REAL(asinhf);
+extern "C" float  atanhf(float x){ return (float)(0.5*lm_log((1.0+x)/(1.0-x))); } CRT_REAL(atanhf);
+extern "C" float  modff (float x,float* ip){ float t=(float)lm_trunc(x); *ip=t; return x-t; } CRT_REAL(modff);
+extern "C" int    ilogbf(float x){ DBits v; v.d=(double)lm_fabs(x); if(v.d==0.0) return -2147483647; return (int)((v.u>>52)&0x7FF)-1023; } CRT_REAL(ilogbf);
 
 // --- string length ---
 
@@ -1051,6 +1156,19 @@ extern "C" int CoCreateGuid(void* pguid) {
 }
 CRT_REAL(CoCreateGuid);
 
+// BCryptGenRandom — thin forwarder to SharpOSHost_FillRandom (host-side,
+// CrtHeapStubs.cs). Generation logic stays in C# per CLAUDE.md invariant 1,
+// same pattern as CoCreateGuid → SharpOSHost_CreateGuid. Used by
+// System.HashCode / randomized string hashing / System.Text.Json for a
+// hash-flood-resistant (non-cryptographic) seed. Returns STATUS_SUCCESS.
+extern "C" int BCryptGenRandom(void* /*hAlgorithm*/, unsigned char* pbBuffer,
+                               unsigned int cbBuffer, unsigned int /*dwFlags*/) {
+    if (pbBuffer == nullptr) return (int)0xC000000DL; // STATUS_INVALID_PARAMETER
+    SharpOSHost_FillRandom(pbBuffer, (int)cbBuffer);
+    return 0; // STATUS_SUCCESS
+}
+CRT_REAL(BCryptGenRandom);
+
 extern "C" void OutputDebugStringA(const char* s) {
     SharpOSHost_DebugPrint("[ODS-A] ");
     if (s) SharpOSHost_DebugPrint(s); else SharpOSHost_DebugPrint("(null)");
@@ -1262,6 +1380,14 @@ CRT_REAL(FlushViewOfFile);
 // in-image stubs (sharpos_resolve_kernel32). Without this LoadLibrary
 // file-loads kernel32.dll, fails, and the runtime throws DllNotFound.
 #define SHARPOS_KERNEL32_HMODULE  ((void*)(uintptr_t)0x6E32116CU)
+// ole32: Guid.NewGuid() P/Invokes [DllImport("ole32.dll")] CoCreateGuid.
+// CoCreateGuid is statically in-image (this file). Sentinel handle →
+// GetProcAddress maps CoCreateGuid to it, skipping the file LoadLibrary
+// that fails on bare metal (no ole32.dll file → DllNotFound).
+#define SHARPOS_OLE32_HMODULE     ((void*)(uintptr_t)0x01E32011U)
+// BCrypt: System.HashCode / randomized string hashing / System.Text.Json
+// P/Invoke [DllImport("BCrypt.dll")] BCryptGenRandom. In-image (this file).
+#define SHARPOS_BCRYPT_HMODULE    ((void*)(uintptr_t)0x0BC39701U)
 
 // Case-insensitive equality of last `n` UTF-16 chars in `s` with ASCII `tail`.
 static int sharpos_wstr_iends_with(const wchar_t* s, const char* tail) {
@@ -1300,6 +1426,20 @@ static int sharpos_is_kernel32(const wchar_t* name) {
         || sharpos_wstr_iends_with(name, "ntdll")
         || sharpos_wstr_iends_with(name, "ntdll.dll")
         || sharpos_wstr_iends_with(name, "ntdll.dll.dll");
+}
+
+static int sharpos_is_ole32(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "ole32")
+        || sharpos_wstr_iends_with(name, "ole32.dll")
+        || sharpos_wstr_iends_with(name, "ole32.dll.dll");
+}
+
+static int sharpos_is_bcrypt(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "bcrypt")
+        || sharpos_wstr_iends_with(name, "bcrypt.dll")
+        || sharpos_wstr_iends_with(name, "bcrypt.dll.dll");
 }
 
 // libSystem.Native — the .NET Unix native shim. Windows-built fork still
@@ -1342,6 +1482,18 @@ extern "C" void* LoadLibraryExW(const wchar_t* lpLibFileName, void* /*hFile*/, u
         SharpOSHost_DebugPrint("[LoadLibrary kernel32] returning sentinel handle\n");
         g_LastError = 0;
         return SHARPOS_KERNEL32_HMODULE;
+    }
+    // ole32 → sentinel; CoCreateGuid is in-image (Guid.NewGuid).
+    if (sharpos_is_ole32(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary ole32] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_OLE32_HMODULE;
+    }
+    // BCrypt → sentinel; BCryptGenRandom is in-image (HashCode/JSON).
+    if (sharpos_is_bcrypt(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary bcrypt] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_BCRYPT_HMODULE;
     }
     void* handle = SharpOSHost_FileOpen(lpLibFileName);
     if (!handle) {
@@ -2128,6 +2280,22 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         g_LastError = 127;
         return nullptr;
     }
+    if (mod == SHARPOS_OLE32_HMODULE && name != nullptr) {
+        if (sharpos_streq(name, "CoCreateGuid")) { g_LastError = 0; return (void*)&CoCreateGuid; }
+        SharpOSHost_DebugPrint("[GetProcAddress ole32] unknown name=");
+        SharpOSHost_DebugPrint(name);
+        SharpOSHost_DebugPrint("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_BCRYPT_HMODULE && name != nullptr) {
+        if (sharpos_streq(name, "BCryptGenRandom")) { g_LastError = 0; return (void*)&BCryptGenRandom; }
+        SharpOSHost_DebugPrint("[GetProcAddress bcrypt] unknown name=");
+        SharpOSHost_DebugPrint(name);
+        SharpOSHost_DebugPrint("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
     g_LastError = 127;   // ERROR_PROC_NOT_FOUND — we have no exports
     return nullptr;
 }
@@ -2239,25 +2407,58 @@ CRT_REAL(qsort);
 //       DWORD64 TableIdentifier, DWORD64 BaseAddress, DWORD Length,
 //       PGET_RUNTIME_FUNCTION_CALLBACK Callback, PVOID Context,
 //       PCWSTR OutOfProcessCallbackDll);
+// Step 1: forward the JIT code-heap unwind callback into the kernel SEH
+// registry (OS/src/PAL/SharpOSHost/SehUnwind.cs) instead of discarding it.
+// Without this, managed exceptions can't unwind through JIT frames (no
+// static .pdata) → unhandled panic. Weak fallback for the non-kernel link.
+extern "C" __attribute__((weak)) void SharpOSHost_RegisterFunctionTableCallback(
+    uint64_t /*base*/, uint32_t /*len*/, void* /*callback*/, void* /*context*/) {}
+
 extern "C" int RtlInstallFunctionTableCallback(uint64_t /*tableId*/,
                                                 uint64_t baseAddress,
                                                 uint32_t length,
-                                                void* /*callback*/,
-                                                void* /*context*/,
+                                                void* callback,
+                                                void* context,
                                                 const wchar_t* /*oopDll*/) {
     SharpOSHost_DebugPrint("[RtlInstallFunctionTableCallback] base=0x");
     SharpOSHost_DebugPrintHex(baseAddress);
     SharpOSHost_DebugPrint(" len=0x");
     SharpOSHost_DebugPrintHex((uint64_t)length);
     SharpOSHost_DebugPrint("\n");
+    SharpOSHost_RegisterFunctionTableCallback(baseAddress, length, callback, context);
     g_LastError = 0;
     return 1;   // TRUE — success
 }
 CRT_REAL(RtlInstallFunctionTableCallback);
 
+// RtlAddFunctionTable — registers a loaded image's STATIC .pdata
+// (sorted RUNTIME_FUNCTION[], RVAs relative to BaseAddress). CoreCLR's
+// PEImageLayout calls this for R2R images (e.g. System.Private.CoreLib
+// precompiled code mapped into the VM window) — peimagelayout.cpp's
+// block is re-enabled under TARGET_SHARPOS. Without registering, the
+// kernel SEH walker has no unwind info for R2R frames → "invalid Rip"
+// → unhandled C++ exception. Forward to the kernel registry; the real
+// search lives C#-side (SehUnwind.cs) per CLAUDE.md invariant 1.
+// Signature (Win32): BOOLEAN RtlAddFunctionTable(PRUNTIME_FUNCTION,
+//   DWORD EntryCount, DWORD64 BaseAddress).
+extern "C" int RtlAddFunctionTable(void* functionTable, uint32_t entryCount,
+                                   uint64_t baseAddress) {
+    SharpOSHost_DebugPrint("[RtlAddFunctionTable] base=0x");
+    SharpOSHost_DebugPrintHex(baseAddress);
+    SharpOSHost_DebugPrint(" count=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)entryCount);
+    SharpOSHost_DebugPrint("\n");
+    if (functionTable != nullptr && entryCount != 0)
+        SharpOSHost_RegisterStaticFunctionTable(baseAddress, functionTable, entryCount);
+    g_LastError = 0;
+    return 1;   // TRUE — success
+}
+CRT_REAL(RtlAddFunctionTable);
+
 // RtlDeleteFunctionTable — unregisters a static function table previously
 // added via RtlAddFunctionTable or RtlInstallFunctionTableCallback. No-op
-// for us since we never index registered tables (kernel-static .pdata only).
+// for us: registries are append-only for the process lifetime (images and
+// JIT heaps are not unloaded on this unikernel).
 extern "C" int RtlDeleteFunctionTable(void* /*functionTable*/) {
     g_LastError = 0;
     return 1;

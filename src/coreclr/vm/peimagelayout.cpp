@@ -510,7 +510,12 @@ ConvertedImageLayout::ConvertedImageLayout(FlatImageLayout* source, bool disable
         ApplyBaseRelocations(relocationMustWriteCopy);
 
         // Check if there is a static function table and install it. (Windows only, except x86)
-#if !defined(TARGET_UNIX) && !defined(TARGET_X86)
+        // SharpOS is TARGET_UNIX-shaped but uses Windows-style table-driven
+        // SEH (kernel SehUnwind), not Unix libunwind — so R2R images DO need
+        // their static .pdata registered (RtlAddFunctionTable → kernel
+        // registry). Without this, unwinding precompiled CoreLib frames in
+        // the VM window fails ("invalid Rip" → unhandled C++ exception).
+#if (!defined(TARGET_UNIX) || defined(TARGET_SHARPOS)) && !defined(TARGET_X86)
         COUNT_T cbSize = 0;
         PT_RUNTIME_FUNCTION   pExceptionDir = (PT_RUNTIME_FUNCTION)GetDirectoryEntryData(IMAGE_DIRECTORY_ENTRY_EXCEPTION, &cbSize);
         DWORD tableSize = cbSize / sizeof(T_RUNTIME_FUNCTION);

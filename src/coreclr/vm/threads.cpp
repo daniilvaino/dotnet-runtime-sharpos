@@ -6757,6 +6757,19 @@ void Thread::FillRegDisplay(const PREGDISPLAY pRD, PT_CONTEXT pctx, bool fLightU
 
 void CheckRegDisplaySP (REGDISPLAY *pRD)
 {
+#if defined(TARGET_SHARPOS)
+    // Bare metal: the managed-throw stackwalk context's SP is a real kernel
+    // stack address (~0x1FE9xxxx). CoreCLR's per-Thread cached stack
+    // base/limit are not populated to describe the kernel stack the host
+    // runs on, so this DEBUG_REGDISPLAY-only sanity assert fails on the
+    // very first FillRegDisplay of exception dispatch (SfiInit) →
+    // RaiseFailFastException, even though pRD->SP is correct for the actual
+    // RtlVirtualUnwind. This is a debug-only invariant about host thread
+    // stack bounds that does not apply here; suppress just this check
+    // (not DEBUG_REGDISPLAY as a whole). See feedback: targeted, not
+    // sledgehammer.
+    return;
+#endif
     if (pRD->SP && pRD->_pThread)
     {
 #ifndef NO_FIXED_STACK_LIMIT

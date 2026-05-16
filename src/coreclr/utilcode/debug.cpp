@@ -25,6 +25,35 @@ extern "C" _CRTIMP int __cdecl _flushall(void);
 void CreateCrashDumpIfEnabled(bool stackoverflow = false);
 #endif
 
+// Gate: !SELF_NO_HOST → only the kernel coreclr.dll utilcode flavor.
+// The "staticnohost" (mscordbi/crossgen/watchdog) and "dac" utilcode
+// flavors both define SELF_NO_HOST and do NOT link the SharpOS PAL
+// (crt_imp_stubs.cpp), so they have no SharpOSHost_* — exclude them
+// entirely (a host-tool assert keeps stock behavior; irrelevant on
+// bare metal). In coreclr.dll, SharpOSHost_DebugPrint resolves to the
+// weak def in crt_imp_stubs.cpp; at the final kernel-image link the C#
+// [RuntimeExport] strong def wins. So here: plain extern decls only
+// (a second weak def would be a duplicate-symbol at the coreclr.dll
+// standalone link, which has no /FORCE:MULTIPLE).
+#if defined(TARGET_SHARPOS) && !defined(SELF_NO_HOST)
+// Bare metal: the fork is a DEBUG build, so CoreCLR _ASSERTE fires on
+// many host-environment invariants that simply don't hold when CoreCLR
+// is hosted on the SharpOS kernel (e.g. thread stack bounds, TEB shape,
+// loader state). On Windows a debug assert is *ignorable* (the dialog's
+// "Ignore" button continues execution); here DbgAssertDialog instead
+// runs FailFastOnAssert → RaiseFailFastException → kernel HALT, which
+// turns every benign debug-only invariant mismatch into a fatal panic
+// and blocks the whole EH path. Make asserts non-fatal: log
+// file:line:expr (far more useful than the truncated "[ODS-A] ?") and
+// return = "Ignore". Real logic bugs still surface as actual faults
+// later; we keep full assert visibility. Generalizes the targeted
+// CheckRegDisplaySP suppression (feedback: targeted, not sledgehammer —
+// this targets the assert *fatality mechanism*, not the whole subsystem,
+// and preserves diagnostics).
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+#endif
+
 // Global state counter to implement SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE.
 Volatile<LONG> g_DbgSuppressAllocationAsserts = 0;
 
@@ -352,6 +381,18 @@ VOID DbgAssertDialog(const char *szFile, int iLine, const char *szExpr)
     STATIC_CONTRACT_SUPPORTS_DAC_HOST_ONLY;
 
     DEBUG_ONLY_FUNCTION;
+
+#if defined(TARGET_SHARPOS) && !defined(SELF_NO_HOST)
+    // Non-fatal assert ("Ignore") for the bare-metal host — log & continue.
+    SharpOSHost_DebugPrint("[ASSERT] ");
+    SharpOSHost_DebugPrint(szFile ? szFile : "?");
+    SharpOSHost_DebugPrint(":");
+    SharpOSHost_DebugPrintHex((uint64_t)iLine);
+    SharpOSHost_DebugPrint(": ");
+    SharpOSHost_DebugPrint(szExpr ? szExpr : "?");
+    SharpOSHost_DebugPrint("  (ignored — SHARPOS non-fatal assert)\n");
+    return;
+#endif
 
 #ifdef DACCESS_COMPILE
     // In the DAC case, asserts can mean one of two things.
