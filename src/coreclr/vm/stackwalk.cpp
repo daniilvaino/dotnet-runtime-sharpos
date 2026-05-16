@@ -545,7 +545,15 @@ PCODE Thread::VirtualUnwindCallFrame(T_CONTEXT* pContext,
     // "not managed code we own" → unwind it as a native frame via
     // RtlLookupFunctionEntry (C# SehUnwind, kernel-image static .pdata,
     // which covers the linked-in coreclr native code).
-    if (pCodeInfo == NULL || !pCodeInfo->IsValid())
+    // Also reject a pCodeInfo whose code address does not match uControlPc:
+    // at a JIT→R2R frame transition during pass-2 unwind the StackFrameIterator
+    // can hand us a stale EECodeInfo (still the previous JIT frame's — valid
+    // but for a different method). Using its RUNTIME_FUNCTION/ModuleBase on
+    // the R2R frame makes RtlVirtualUnwind apply the wrong unwind info →
+    // postRip=0 → CallCatchFunclet call 0. Re-resolve via the C# SehUnwind
+    // (RtlLookupFunctionEntry) for the actual uControlPc instead.
+    if (pCodeInfo == NULL || !pCodeInfo->IsValid()
+        || (UINT_PTR)PCODEToPINSTR(pCodeInfo->GetCodeAddress()) != (UINT_PTR)PCODEToPINSTR(uControlPc))
 #else
     if (pCodeInfo == NULL)
 #endif
