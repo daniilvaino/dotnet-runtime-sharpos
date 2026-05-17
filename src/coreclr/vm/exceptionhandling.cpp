@@ -3087,7 +3087,7 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
         THROWS;
     }
     CONTRACTL_END;
-    
+
     Thread* pThread = GET_THREAD();
     pThread->DecPreventAbort();
 
@@ -3198,7 +3198,30 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
     // Sync managed exception state, for the managed thread, based upon any active exception tracker
     pThread->SyncManagedExceptionState(false);
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // step 71 FIX — For an exception of NATIVE origin (COMPlusThrow from a
+    // JITed helper, e.g. checked-overflow → kOverflowException), the
+    // C#-side SEH unwind produces a wrong pRegDisplay->
+    // pCurrentContextPointers->Rbp for the catching frame;
+    // UpdateNonvolatileRegisters then copies that bad value into the
+    // resume CONTEXT, shifting RBP vs the value the catch funclet actually
+    // ran with (CallEHFunclet sets rbp = pCurrentContext->Rbp). The
+    // funclet and the post-catch continuation SHARE the catching method's
+    // frame, so the continuation must resume with that same RBP — else
+    // every frame-relative parent local reads garbage (statics survive).
+    // Preserve RBP across UpdateNonvolatileRegisters for the catch-resume
+    // path. Managed-origin: no-op (its pCurrentContextPointers->Rbp is
+    // already correct, saved == restored). Upstream-true-root (future
+    // hardening): fix the native-origin unwind's pCurrentContextPointers->
+    // Rbp in StackFrameIterator/SehUnwind.
+    bool   __sosRbpFix   = (pHandlerIP != NULL && pvRegDisplay && pvRegDisplay->pCurrentContext);
+    uint64_t __sosSavedRbp = __sosRbpFix ? (uint64_t)pvRegDisplay->pCurrentContext->Rbp : 0;
+#endif
     ExInfo::UpdateNonvolatileRegisters(pvRegDisplay->pCurrentContext, pvRegDisplay, FALSE);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    if (__sosRbpFix)
+        pvRegDisplay->pCurrentContext->Rbp = (DWORD64)__sosSavedRbp;
+#endif
     if (pHandlerIP != NULL)
     {
         pCodeManager->ResumeAfterCatch(pvRegDisplay->pCurrentContext, targetSSP, fIntercepted);
