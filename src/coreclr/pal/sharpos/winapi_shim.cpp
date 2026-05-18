@@ -91,6 +91,11 @@ extern "C" __attribute__((weak)) void SharpOSHost_DebugWrite(const char* /*buf*/
 // untouched; the threads.cpp caller pre-zeroes and only trusts non-zero
 // base>limit, so absence cleanly falls back to the original path.
 extern "C" __attribute__((weak)) void SharpOSHost_GetStackBounds(uint64_t* /*outBase*/, uint64_t* /*outLimit*/) {}
+// step 73 — weak fallbacks for the CMOS wall-clock bridge. Absent kernel
+// export → FILETIME 0 (DateTime.UtcNow stays 1601, old behavior) and
+// SYSTEMTIME left as the caller's zero-fill. No fault either way.
+extern "C" __attribute__((weak)) long long SharpOSHost_GetUtcFileTime(void) { return 0; }
+extern "C" __attribute__((weak)) void SharpOSHost_GetSystemTime(unsigned short* /*out8*/) {}
 
 // ---------------------------------------------------------------------------
 // PAL_LOAD* — Unix-style PE loader entry points.

@@ -696,9 +696,16 @@ extern "C" uint64_t GetTickCount64(void) {
 }
 CRT_REAL(GetTickCount64);
 
+// step 73 — wall clock bridged to the kernel CMOS RTC. Was: write 0 →
+// DateTime.UtcNow == 1601-01-01. Now: FILETIME / SYSTEMTIME from CMOS
+// (treated as UTC — bare metal has no tz DB). Weak fallback (winapi_shim)
+// returns 0 / leaves zero-fill if the kernel export is absent.
+extern "C" long long SharpOSHost_GetUtcFileTime(void);
+extern "C" void SharpOSHost_GetSystemTime(unsigned short* out8);
+
 extern "C" void GetSystemTimeAsFileTime(void* out) {
     TRACE_REAL(GetSystemTimeAsFileTime);
-    if (out) *(uint64_t*)out = 0;
+    if (out) *(uint64_t*)out = (uint64_t)SharpOSHost_GetUtcFileTime();
 }
 CRT_REAL(GetSystemTimeAsFileTime);
 
@@ -707,6 +714,7 @@ extern "C" void GetSystemTime(void* out) {
     if (out) {
         uint16_t* p = (uint16_t*)out;
         for (int i = 0; i < 8; i++) p[i] = 0;
+        SharpOSHost_GetSystemTime((unsigned short*)p);
     }
 }
 CRT_REAL(GetSystemTime);
@@ -2119,7 +2127,17 @@ extern "C" uint32_t GetEnvironmentVariableA(const char* /*name*/, char* /*buf*/,
 }
 CRT_REAL(GetEnvironmentVariableA);
 
-extern "C" wchar_t* GetEnvironmentStringsW(void) { TRACE_REAL(GetEnvironmentStringsW); return nullptr; }
+// step 73 quick-win — was `return nullptr`: CoreCLR's
+// Environment.GetEnvironmentVariables() walked a null block computing
+// length to a huge value → OutOfMemoryException. A valid EMPTY
+// environment block is a double-NUL (the parser sees a zero-length
+// first entry and stops) → empty dictionary, no OOM. Static storage;
+// FreeEnvironmentStringsW is a no-op (must not free a static).
+extern "C" wchar_t* GetEnvironmentStringsW(void) {
+    TRACE_REAL(GetEnvironmentStringsW);
+    static const wchar_t k_empty_env[] = { 0, 0 };
+    return (wchar_t*)k_empty_env;
+}
 CRT_REAL(GetEnvironmentStringsW);
 extern "C" int FreeEnvironmentStringsW(wchar_t* /*p*/) { TRACE_REAL(FreeEnvironmentStringsW); return 1; }
 CRT_REAL(FreeEnvironmentStringsW);
