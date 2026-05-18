@@ -6030,11 +6030,34 @@ BOOL Thread::UniqueStack(void* stackStart)
  * Returns:
  *  address of the lower bound of the threads's stack.
  */
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// step 72 / Frontier-B root fix. SharpOS's VirtualQuery is a fake stub
+// (AllocationBase = the queried address), so the Windows-style
+// GetStackLowerBound branch below would return &local — an address near
+// the stack TOP, not the true lower bound. m_CacheStackLimit then bounds
+// the GC stack-root scan / unwind sanity to a sliver near the top,
+// dropping live OBJECTREFs in deep reflection frames (System.Text.Json
+// reflection-mode FailFast; chronic stackwalk.cpp:974). The kernel
+// returns the true UEFI stack-region bounds [limit(low), base(high)];
+// weak no-op default keeps the fork linkable if the export is absent
+// (→ 0/0 → original path preserved).
+extern "C" void SharpOSHost_GetStackBounds(uint64_t* outBase, uint64_t* outLimit);
+#endif
+
 void * Thread::GetStackLowerBound()
 {
     // Called during fiber switch.  Can not have non-static contract.
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    {
+        uint64_t sosBase = 0, sosLimit = 0;
+        SharpOSHost_GetStackBounds(&sosBase, &sosLimit);
+        if (sosBase != 0 && sosLimit != 0 && sosBase > sosLimit)
+            return (void *)(uintptr_t)sosLimit;
+    }
+#endif
 
 #if !defined(TARGET_UNIX) || defined(TARGET_SHARPOS)
    MEMORY_BASIC_INFORMATION lowerBoundMemInfo;
@@ -6071,6 +6094,15 @@ void *Thread::GetStackUpperBound()
     // Called during fiber switch.  Can not have non-static contract.
     STATIC_CONTRACT_NOTHROW;
     STATIC_CONTRACT_GC_NOTRIGGER;
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    {
+        uint64_t sosBase = 0, sosLimit = 0;
+        SharpOSHost_GetStackBounds(&sosBase, &sosLimit);
+        if (sosBase != 0 && sosLimit != 0 && sosBase > sosLimit)
+            return (void *)(uintptr_t)sosBase;
+    }
+#endif
 
     return ClrTeb::GetStackBase();
 }

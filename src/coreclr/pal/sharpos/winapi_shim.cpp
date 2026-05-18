@@ -86,6 +86,11 @@ extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) 
 // sink; the kernel's real (non-Verbose-gated) [RuntimeExport] overrides it
 // at runtime. Reverted with the probe after diagnosis.
 extern "C" __attribute__((weak)) void SharpOSHost_DebugWrite(const char* /*buf*/, int /*len*/) {}
+// step 72 / Frontier-B root fix — weak fallback so the fork links if the
+// kernel doesn't provide the real [RuntimeExport]. No-op leaves *out=…
+// untouched; the threads.cpp caller pre-zeroes and only trusts non-zero
+// base>limit, so absence cleanly falls back to the original path.
+extern "C" __attribute__((weak)) void SharpOSHost_GetStackBounds(uint64_t* /*outBase*/, uint64_t* /*outLimit*/) {}
 
 // ---------------------------------------------------------------------------
 // PAL_LOAD* — Unix-style PE loader entry points.

@@ -173,7 +173,10 @@ CRT_STUB(ExitProcess)
 // ExitThread — real impl below (no-op, can't actually terminate single-thread)
 CRT_STUB(FlushFileBuffers)
 // FlushInstructionCache — real impl below (no-op on coherent x86/x64 I-cache)
-CRT_STUB(FlushProcessWriteBuffers)
+// FlushProcessWriteBuffers — real impl below (no-op: single-core / no
+// background managed threads on bring-up; SMP would need an IPI barrier).
+// NtQuerySystemInformation — real impl below (ntdll P/Invoke from
+// DateTime leap-second check via reflection-mode System.Text.Json).
 CRT_STUB(FormatMessageW)
 // FreeEnvironmentStringsW — real impl below
 // FreeLibrary — real impl below (no-op; we don't load DLLs)
@@ -1041,6 +1044,15 @@ CRT_REAL(_invalid_parameter_noinfo);
 extern "C" int TerminateProcess(void* /*hProcess*/, uint32_t exitCode) {
     SharpOSHost_DebugPrint("[TerminateProcess code=0x");
     SharpOSHost_DebugPrintHex(exitCode);
+    // step 72 (sage): 0x80131506 == COR_E_EXECUTIONENGINE — a genuine
+    // unrecoverable EE FailFast, not the EventPipe-assert→abort cascade we
+    // intentionally swallow during bring-up. Continuing past it only
+    // produces a post-fatal ignored-stackwalk storm that masks the real
+    // result. Halt cleanly so the log ends at the FailFast.
+    if (exitCode == 0x80131506u) {
+        SharpOSHost_DebugPrint("] FATAL EE — halting\n");
+        SharpOSHost_Panic("TerminateProcess(COR_E_EXECUTIONENGINE 0x80131506)");
+    }
     SharpOSHost_DebugPrint("] ignored — keep going\n");
     return 1;  // pretend success; CoreCLR keeps running
 }
@@ -1704,6 +1716,45 @@ extern "C" int FlushInstructionCache(void* /*hProcess*/, const void* /*lpBaseAdd
 }
 CRT_REAL(FlushInstructionCache);
 
+// FlushProcessWriteBuffers — Win32/kernel32 full-memory-barrier across all
+// threads of the process. SharpOS bring-up is single-core with no
+// background managed threads, so a plain return is correct (no other
+// thread can observe stale writes). SMP later: send an IPI / membarrier.
+// Was a CRT trap-stub; reflection-mode System.Text.Json reached it via
+// the EH/GC path and panicked.
+extern "C" void FlushProcessWriteBuffers(void) { }
+CRT_REAL(FlushProcessWriteBuffers);
+
+// NtQuerySystemInformation — ntdll P/Invoke. The only call on our path is
+// .NET's DateTime leap-second probe:
+//   Interop.NtDll.NtQuerySystemInformation(SystemLeapSecondInformation,
+//       &SYSTEM_LEAP_SECOND_INFORMATION{ BOOLEAN Enabled; ULONG Flags; },
+//       len, &ret)  (SystemLeapSecondInformation = 206)
+// Report "leap seconds unsupported" (Enabled=0) with STATUS_SUCCESS so
+// the BCL caches that result instead of throwing. Any other class →
+// STATUS_NOT_IMPLEMENTED (callers treat non-zero as "unsupported").
+extern "C" int NtQuerySystemInformation(int SystemInformationClass,
+                                        void* SystemInformation,
+                                        unsigned int SystemInformationLength,
+                                        unsigned int* ReturnLength) {
+    const int  STATUS_SUCCESS              = 0;
+    const int  STATUS_NOT_IMPLEMENTED      = (int)0xC0000002u;
+    const int  STATUS_INFO_LENGTH_MISMATCH = (int)0xC0000004u;
+    const int  SystemLeapSecondInformation = 206;
+    if (ReturnLength) *ReturnLength = 0;
+    if (SystemInformationClass == SystemLeapSecondInformation) {
+        // { unsigned char Enabled; unsigned int Flags; } — 8 bytes packed.
+        if (ReturnLength) *ReturnLength = 8;
+        if (!SystemInformation || SystemInformationLength < 8)
+            return STATUS_INFO_LENGTH_MISMATCH;
+        ((unsigned char*)SystemInformation)[0] = 0;          // Enabled = FALSE
+        *(unsigned int*)((unsigned char*)SystemInformation + 4) = 0; // Flags
+        return STATUS_SUCCESS;
+    }
+    return STATUS_NOT_IMPLEMENTED;
+}
+CRT_REAL(NtQuerySystemInformation);
+
 // RtlCaptureContext — capture caller-state CPU registers into a CONTEXT
 // struct. Win64 ABI: arg in RCX = PCONTEXT.
 //
@@ -2102,9 +2153,13 @@ CRT_REAL(GetModuleHandleA);
 // don't poison HRESULT extraction.
 extern "C" uint32_t GetModuleFileNameW(void* /*mod*/, wchar_t* buf, uint32_t size) {
     TRACE_REAL(GetModuleFileNameW);
+    // Deliberately obvious-fake name: there is NO real exe (CoreCLR is
+    // statically linked into the kernel image). Named so a disassembling
+    // reader is not misled into hunting a "\sharpos\kernel.exe" artifact.
     static const wchar_t k_path[] = { '\\', 's', 'h', 'a', 'r', 'p', 'o', 's', '\\',
-                                      'k', 'e', 'r', 'n', 'e', 'l', '.', 'e', 'x', 'e', 0 };
-    const uint32_t k_pathLen = 19;  // chars excluding null
+                                      'f', 'a', 'k', 'e', '_', 'k', 'e', 'r', 'n', 'e', 'l',
+                                      '_', 'p', 'a', 't', 'h', '.', 'e', 'x', 'e', 0 };
+    const uint32_t k_pathLen = 29;  // chars excluding null
     if (buf == nullptr || size == 0) {
         // ABI: returns required length (excluding null) — caller usually
         // probes for size by passing 0. We don't have that semantic on
@@ -2574,6 +2629,8 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"GetFileSize"))                  return (void*)&GetFileSize;
     // Misc / EH / icache
     if (sharpos_streq(n,"FlushInstructionCache"))        return (void*)&FlushInstructionCache;
+    if (sharpos_streq(n,"FlushProcessWriteBuffers"))     return (void*)&FlushProcessWriteBuffers;
+    if (sharpos_streq(n,"NtQuerySystemInformation"))     return (void*)&NtQuerySystemInformation;
     if (sharpos_streq(n,"RtlCaptureContext"))            return (void*)&RtlCaptureContext;
     if (sharpos_streq(n,"RtlInstallFunctionTableCallback")) return (void*)&RtlInstallFunctionTableCallback;
     if (sharpos_streq(n,"RtlDeleteFunctionTable"))       return (void*)&RtlDeleteFunctionTable;
