@@ -2108,6 +2108,33 @@ UMEntryPrestubUnwindFrameChainHandler(
     return disposition;
 }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// Phase D iteration 1 — extern "C" declarations must be at file scope,
+// not inside a function body (memory: extern_c_only_file_scope).
+// crt_imp_stubs.cpp already declares these weak; we just re-declare
+// here so this TU sees them with C linkage.
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+
+// Phase D iteration 3 — expose FrameChain head to kernel C# walker.
+// The walker reads `Thread::m_pFrame` on stub-frame detection and
+// uses InlinedCallFrame fields to skip past CoreCLR's managed-to-
+// unmanaged transition stubs (P/Invoke / reflection / helpers).
+// `SetCurrentFrame` is needed to pop the frame from the chain after
+// it has been activated.
+EXTERN_C void* SharpOSHost_GetCurrentFrame()
+{
+    Thread* t = GetThread();
+    return t ? (void*)t->m_pFrame : nullptr;
+}
+
+EXTERN_C void SharpOSHost_SetCurrentFrame(void* newFrame)
+{
+    Thread* t = GetThread();
+    if (t) t->m_pFrame = (Frame*)newFrame;
+}
+#endif
+
 // This is the personality routine setup for the assembly helper (CallDescrWorker) that calls into
 // managed code.
 EXTERN_C EXCEPTION_DISPOSITION __cdecl
@@ -2119,6 +2146,54 @@ CallDescrWorkerUnwindFrameChainHandler(IN     PEXCEPTION_RECORD   pExceptionReco
 {
 
     Thread* pThread = GetThread();
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // step-89 follow-up (Phase D iteration 1): confirm
+    // (a) this handler is actually invoked on the kill frame in §11
+    //     repros (Socket-in-try),
+    // (b) GetThread() returns a valid singleton at search-pass time,
+    // (c) Thread::m_pFrame is non-null (CoreCLR stub macros maintain
+    //     the FrameChain → next iteration can dereference).
+    SharpOSHost_DebugPrint("[stubhdr CDW] pThread=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pThread);
+    SharpOSHost_DebugPrint(" m_pFrame=0x");
+    SharpOSHost_DebugPrintHex(pThread ? (uint64_t)pThread->m_pFrame : 0);
+    SharpOSHost_DebugPrint(" pestab=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pEstablisherFrame);
+    SharpOSHost_DebugPrint(" flags=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pExceptionRecord->ExceptionFlags);
+    SharpOSHost_DebugPrint(" rip=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pContextRecord->Rip);
+    // If m_pFrame is non-null, print its identifier + key InlinedCallFrame
+    // fields. Frame layout (no vtable in this build; ID-based dispatch):
+    //   +0:  FrameIdentifier _frameIdentifier (1 = InlinedCallFrame)
+    //   +8:  PTR_Frame m_Next
+    //   +16: m_Datum
+    //   +24: m_pCallSiteSP            (caller's RSP)
+    //   +32: m_pCallerReturnAddress   (caller's RIP — managed code!)
+    //   +40: m_pCalleeSavedFP         (caller's RBP)
+    //   +48: m_pThread
+    if (pThread && pThread->m_pFrame != nullptr
+        && (uintptr_t)pThread->m_pFrame > 0x10000
+        && (uintptr_t)pThread->m_pFrame != (uintptr_t)-1)   // FRAME_TOP sentinel
+    {
+        uint64_t* fp = (uint64_t*)pThread->m_pFrame;
+        SharpOSHost_DebugPrint(" frameId=0x"); SharpOSHost_DebugPrintHex(fp[0]);
+        SharpOSHost_DebugPrint(" m_Next=0x");  SharpOSHost_DebugPrintHex(fp[1]);
+        if (fp[0] == 1)   // InlinedCallFrame
+        {
+            SharpOSHost_DebugPrint(" ICF{CallSiteSP=0x");
+            SharpOSHost_DebugPrintHex(fp[3]);
+            SharpOSHost_DebugPrint(" CallerRA=0x");
+            SharpOSHost_DebugPrintHex(fp[4]);
+            SharpOSHost_DebugPrint(" CalleeSavedFP=0x");
+            SharpOSHost_DebugPrintHex(fp[5]);
+            SharpOSHost_DebugPrint("}");
+        }
+    }
+    SharpOSHost_DebugPrint("\n");
+#endif
+
     if (pExceptionRecord->ExceptionCode == STATUS_STACK_OVERFLOW)
     {
         if (IS_UNWINDING(pExceptionRecord->ExceptionFlags))
