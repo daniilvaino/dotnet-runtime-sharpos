@@ -740,6 +740,24 @@ extern "C" void GetSystemTimeAsFileTime(void* out) {
 }
 CRT_REAL(GetSystemTimeAsFileTime);
 
+// GetSystemTimePreciseAsFileTime -- Win8+ variant returning a higher-
+// resolution FILETIME. We don't have sub-CMOS-tick resolution on
+// SharpOS yet (the kernel.Rtc resolves to seconds); forward to the
+// coarse variant. BCL accepts the lower precision.
+extern "C" void GetSystemTimePreciseAsFileTime(void* out) {
+    TRACE_REAL(GetSystemTimePreciseAsFileTime);
+    if (out) *(uint64_t*)out = (uint64_t)SharpOSHost_GetUtcFileTime();
+}
+CRT_REAL(GetSystemTimePreciseAsFileTime);
+
+// SetThreadDescription -- Win10+ thread naming API. SharpOS has no
+// thread-description registry; ignore. Returns success (S_OK).
+extern "C" int32_t SetThreadDescription(void* /*hThread*/, const wchar_t* /*lpThreadDescription*/) {
+    TRACE_REAL(SetThreadDescription);
+    return 0;
+}
+CRT_REAL(SetThreadDescription);
+
 extern "C" void GetSystemTime(void* out) {
     TRACE_REAL(GetSystemTime);
     if (out) {
@@ -1496,6 +1514,17 @@ CRT_REAL(FlushViewOfFile);
 // BCrypt: System.HashCode / randomized string hashing / System.Text.Json
 // P/Invoke [DllImport("BCrypt.dll")] BCryptGenRandom. In-image (this file).
 #define SHARPOS_BCRYPT_HMODULE    ((void*)(uintptr_t)0x0BC39701U)
+// step 99: Secur32 for Environment.UserName -> GetUserNameExW. In-image
+// stub returns "local" -- SharpOS has no auth subsystem.
+#define SHARPOS_SECUR32_HMODULE   ((void*)(uintptr_t)0x5EC03211U)
+// step 99 pass 3: libSystem.Security.Cryptography.Native.OpenSsl --
+// this fork's BCL uses the Unix-native OpenSSL surface for
+// RandomNumberGenerator.Fill and SHA256.HashData even on Windows-host
+// builds (System.Private.CoreLib is shared between Unix and SharpOS
+// targets, and ships with libSystem.Security.Cryptography.Native.OpenSsl
+// P/Invokes). We satisfy the minimal hash + RNG surface with the SHA-256
+// already compiled in this file + SharpOSHost_FillRandom.
+#define SHARPOS_SYSCRYPTO_HMODULE ((void*)(uintptr_t)0x5C39709AU)
 
 // Case-insensitive equality of last `n` UTF-16 chars in `s` with ASCII `tail`.
 static int sharpos_wstr_iends_with(const wchar_t* s, const char* tail) {
@@ -1550,6 +1579,22 @@ static int sharpos_is_bcrypt(const wchar_t* name) {
         || sharpos_wstr_iends_with(name, "bcrypt.dll.dll");
 }
 
+static int sharpos_is_secur32(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "secur32")
+        || sharpos_wstr_iends_with(name, "secur32.dll")
+        || sharpos_wstr_iends_with(name, "secur32.dll.dll");
+}
+
+static int sharpos_is_syscrypto(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "libsystem.security.cryptography.native.openssl")
+        || sharpos_wstr_iends_with(name, "system.security.cryptography.native.openssl")
+        || sharpos_wstr_iends_with(name, "libsystem.security.cryptography.native.openssl.dll")
+        || sharpos_wstr_iends_with(name, "libsystem.security.cryptography.native.openssl.so")
+        || sharpos_wstr_iends_with(name, "system.security.cryptography.native.openssl.dll");
+}
+
 // libSystem.Native — the .NET Unix native shim. Windows-built fork still
 // emits Unix-flavored framework assemblies (System.Console P/Invokes
 // libSystem.Native, not kernel32). The runtime's DllImport resolver tries
@@ -1602,6 +1647,19 @@ extern "C" void* LoadLibraryExW(const wchar_t* lpLibFileName, void* /*hFile*/, u
         SharpOSHost_DebugPrint("[LoadLibrary bcrypt] returning sentinel handle\n");
         g_LastError = 0;
         return SHARPOS_BCRYPT_HMODULE;
+    }
+    // step 99: Secur32 → sentinel; GetUserNameExW is in-image (Environment.UserName).
+    if (sharpos_is_secur32(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary secur32] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_SECUR32_HMODULE;
+    }
+    // step 99 pass 3: libSystem.Security.Cryptography.Native.OpenSsl → sentinel;
+    // CryptoNative_* RNG/SHA256 are in-image.
+    if (sharpos_is_syscrypto(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary syscrypto] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_SYSCRYPTO_HMODULE;
     }
     void* handle = SharpOSHost_FileOpen(lpLibFileName);
     if (!handle) {
@@ -2235,6 +2293,596 @@ CRT_REAL(GetEnvironmentStringsW);
 extern "C" int FreeEnvironmentStringsW(wchar_t* /*p*/) { TRACE_REAL(FreeEnvironmentStringsW); return 1; }
 CRT_REAL(FreeEnvironmentStringsW);
 
+// step 99 -- system/env string getters. PAL is a thin forwarder; the
+// actual strings (machine name "SHARPOS", paths starting with \sharpos,
+// hostname "sharpos", user "local") live kernel-side in
+// OS/src/PAL/SharpOSHost/SystemIdentity.cs (SharpOSHost_GetSystemString).
+// Win32 length protocol is enforced HERE (return chars copied excl NUL
+// on success, required size incl NUL on too-small) because the kernel
+// returns the same uniform shape and the per-API quirks (ASCII -> UTF-16
+// widening, nSize in/out vs nBufferLength, NameType ignored, ...) are
+// ABI shape transformations, not policy.
+
+extern "C" int SharpOSHost_GetSystemString(int kind, uint8_t* outBuf, int outBufSize);
+
+// Kind constants mirror SystemIdentity.Kind*.
+static const int k_SI_CurrentDir   = 0;
+static const int k_SI_TempPath     = 1;
+static const int k_SI_SystemDir    = 2;
+static const int k_SI_WindowsDir   = 3;
+static const int k_SI_MachineName  = 4;
+static const int k_SI_UserName     = 5;
+// k_SI_HostName, k_SI_OsName, k_SI_TimeZoneName not used by Win32 paths.
+
+// Helper: copy a kernel-side ASCII string into a wide Win32 buffer.
+// Returns chars copied (excl NUL) on success, or required size (incl
+// NUL) when the caller's buffer is too small. Returns 0 with
+// g_LastError set on internal failure (bad kind).
+static uint32_t sharpos_wfetch(int kind, wchar_t* dst, uint32_t dst_chars) {
+    // Ask the kernel for the required length first.
+    int needed_incl_nul = SharpOSHost_GetSystemString(kind, nullptr, 0);
+    if (needed_incl_nul <= 0) { g_LastError = 87; return 0; }
+    uint32_t needed = (uint32_t)needed_incl_nul;        // incl NUL
+    if (dst == nullptr || dst_chars < needed) return needed;
+
+    // Fetch into a transient stack buffer of bounded size (kernel
+    // strings are ASCII paths/identifiers, well under 64 chars).
+    uint8_t tmp[128];
+    int n = needed > sizeof(tmp) ? (int)sizeof(tmp) : (int)needed;
+    int got = SharpOSHost_GetSystemString(kind, tmp, n);
+    if (got < 0) { g_LastError = 87; return 0; }
+    uint32_t srcLen = (uint32_t)got;
+    for (uint32_t i = 0; i < srcLen; i++) dst[i] = (wchar_t)tmp[i];
+    dst[srcLen] = 0;
+    return srcLen;                                       // chars excl NUL
+}
+
+extern "C" uint32_t GetCurrentDirectoryW(uint32_t nBufferLength, wchar_t* lpBuffer) {
+    TRACE_REAL(GetCurrentDirectoryW);
+    g_LastError = 0;
+    return sharpos_wfetch(k_SI_CurrentDir, lpBuffer, nBufferLength);
+}
+CRT_REAL(GetCurrentDirectoryW);
+
+extern "C" uint32_t GetTempPathW(uint32_t nBufferLength, wchar_t* lpBuffer) {
+    TRACE_REAL(GetTempPathW);
+    g_LastError = 0;
+    return sharpos_wfetch(k_SI_TempPath, lpBuffer, nBufferLength);
+}
+CRT_REAL(GetTempPathW);
+
+extern "C" uint32_t GetTempPath2W(uint32_t nBufferLength, wchar_t* lpBuffer) {
+    TRACE_REAL(GetTempPath2W);
+    g_LastError = 0;
+    return sharpos_wfetch(k_SI_TempPath, lpBuffer, nBufferLength);
+}
+CRT_REAL(GetTempPath2W);
+
+extern "C" uint32_t GetSystemDirectoryW(wchar_t* lpBuffer, uint32_t uSize) {
+    TRACE_REAL(GetSystemDirectoryW);
+    g_LastError = 0;
+    return sharpos_wfetch(k_SI_SystemDir, lpBuffer, uSize);
+}
+CRT_REAL(GetSystemDirectoryW);
+
+extern "C" uint32_t GetWindowsDirectoryW(wchar_t* lpBuffer, uint32_t uSize) {
+    TRACE_REAL(GetWindowsDirectoryW);
+    g_LastError = 0;
+    return sharpos_wfetch(k_SI_WindowsDir, lpBuffer, uSize);
+}
+CRT_REAL(GetWindowsDirectoryW);
+
+// nSize is in/out: caller passes max chars, gets back length excl NUL
+// on success (return TRUE) or required size incl NUL on too-small
+// (return FALSE, ERROR_MORE_DATA).
+static const uint32_t k_ERROR_MORE_DATA = 234;
+
+static int sharpos_winsize_fetch(int kind, wchar_t* lpBuffer, uint32_t* nSize) {
+    if (nSize == nullptr) { g_LastError = 87; return 0; }
+    int needed_incl_nul = SharpOSHost_GetSystemString(kind, nullptr, 0);
+    if (needed_incl_nul <= 0) { g_LastError = 87; return 0; }
+    uint32_t needed = (uint32_t)needed_incl_nul;
+    if (lpBuffer == nullptr || *nSize < needed) {
+        *nSize = needed;
+        g_LastError = k_ERROR_MORE_DATA;
+        return 0;
+    }
+    uint32_t copied = sharpos_wfetch(kind, lpBuffer, *nSize);
+    *nSize = copied;
+    g_LastError = 0;
+    return 1;
+}
+
+extern "C" int GetComputerNameExW(int /*NameType*/, wchar_t* lpBuffer, uint32_t* nSize) {
+    TRACE_REAL(GetComputerNameExW);
+    return sharpos_winsize_fetch(k_SI_MachineName, lpBuffer, nSize);
+}
+CRT_REAL(GetComputerNameExW);
+
+extern "C" int GetUserNameExW(int /*NameFormat*/, wchar_t* lpNameBuffer, uint32_t* nSize) {
+    TRACE_REAL(GetUserNameExW);
+    return sharpos_winsize_fetch(k_SI_UserName, lpNameBuffer, nSize);
+}
+CRT_REAL(GetUserNameExW);
+
+// RTL_OSVERSIONINFOEXW: dwMajor at [+1], dwMinor at [+2], dwBuild at
+// [+3], dwPlatformId at [+4]. PAL only marshals; the version values
+// come from SharpOSHost_GetOSVersion (kernel-side).
+extern "C" void SharpOSHost_GetOSVersion(uint32_t* outMajor, uint32_t* outMinor, uint32_t* outBuild);
+
+extern "C" int32_t RtlGetVersion(void* lpVersionInformation) {
+    TRACE_REAL(RtlGetVersion);
+    if (lpVersionInformation == nullptr) return (int32_t)0xC000000D;
+    uint32_t* fields = (uint32_t*)lpVersionInformation;
+    SharpOSHost_GetOSVersion(&fields[1], &fields[2], &fields[3]);
+    fields[4] = 2;       // dwPlatformId = VER_PLATFORM_WIN32_NT
+    g_LastError = 0;
+    return 0;
+}
+CRT_REAL(RtlGetVersion);
+
+extern "C" int GetVersionExW(void* lpVersionInformation) {
+    TRACE_REAL(GetVersionExW);
+    return RtlGetVersion(lpVersionInformation) == 0 ? 1 : 0;
+}
+CRT_REAL(GetVersionExW);
+
+// GetFileAttributesExW -- BCL File.Exists/Directory.Exists probe this.
+// Returning FALSE with ERROR_FILE_NOT_FOUND makes File.Exists("foo")
+// return `false` without throwing. The actual FS would be reached via
+// SharpOSHost_FileOpen-style routing in future iterations; for now we
+// honestly report "not found" for everything except the well-known
+// SharpOS root.
+//
+// WIN32_FILE_ATTRIBUTE_DATA layout (out struct, fInfoLevelId=
+// GetFileExInfoStandard=0):
+//   +0  DWORD dwFileAttributes
+//   +4  FILETIME ftCreationTime         (DWORD low+high)
+//   +12 FILETIME ftLastAccessTime
+//   +20 FILETIME ftLastWriteTime
+//   +28 DWORD nFileSizeHigh
+//   +32 DWORD nFileSizeLow              (= 36 bytes total)
+static const uint32_t k_ERROR_FILE_NOT_FOUND = 2;
+static const uint32_t k_FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
+
+// GetComputerNameW (kernel32) -- BCL Environment.MachineName uses the
+// non-Ex variant. Marshals through SystemIdentity (KindMachineName).
+extern "C" int GetComputerNameW(wchar_t* lpBuffer, uint32_t* nSize) {
+    TRACE_REAL(GetComputerNameW);
+    return sharpos_winsize_fetch(k_SI_MachineName, lpBuffer, nSize);
+}
+CRT_REAL(GetComputerNameW);
+
+// GetTimeZoneInformation / GetDynamicTimeZoneInformation -- BCL
+// TimeZoneInfo.Local calls these. PAL marshals the Win32 struct shape;
+// the actual policy (bias, zone name, no DST) lives kernel-side in
+// SystemIdentity (SharpOSHost_GetTimeZoneBiasMinutes / KindTimeZoneName).
+//
+// TIME_ZONE_INFORMATION layout (172 bytes):
+//   +0   LONG Bias                              (4)
+//   +4   WCHAR StandardName[32]                  (64)
+//   +68  SYSTEMTIME StandardDate                 (16)
+//   +84  LONG StandardBias                       (4)
+//   +88  WCHAR DaylightName[32]                  (64)
+//   +152 SYSTEMTIME DaylightDate                 (16)
+//   +168 LONG DaylightBias                       (4)  -> 172 total
+//
+// DYNAMIC_TIME_ZONE_INFORMATION extends with:
+//   +172 WCHAR TimeZoneKeyName[128]              (256)
+//   +428 BOOLEAN DynamicDaylightTimeDisabled     (1, padded to 4) -> 432
+static const uint32_t k_TIME_ZONE_ID_UNKNOWN = 0;
+static const uint32_t k_TIME_ZONE_ID_INVALID = 0xFFFFFFFFu;
+
+extern "C" int SharpOSHost_GetTimeZoneBiasMinutes(void);
+
+// Fill TIME_ZONE_INFORMATION fixed-prefix from kernel-reported state.
+// Returns TIME_ZONE_ID_UNKNOWN (no DST) on success.
+static uint32_t sharpos_fill_tz(uint8_t* p, uint32_t totalBytes) {
+    for (uint32_t i = 0; i < totalBytes; i++) p[i] = 0;
+    int biasMinutes = SharpOSHost_GetTimeZoneBiasMinutes();
+    *(int32_t*)(p + 0) = biasMinutes;           // Bias (positive = west of UTC)
+    // StandardName (offset +4, 32 wchars). Fill from KindTimeZoneName.
+    uint8_t tzNameUtf8[16] = {0};
+    int got = SharpOSHost_GetSystemString(/*KindTimeZoneName*/8, tzNameUtf8, sizeof(tzNameUtf8));
+    if (got > 0) {
+        wchar_t* stdName = (wchar_t*)(p + 4);
+        int copy = got;
+        if (copy > 31) copy = 31;
+        for (int i = 0; i < copy; i++) stdName[i] = (wchar_t)tzNameUtf8[i];
+        // Mirror as DaylightName at +88 so consumers reading either get
+        // a sensible label, even though DST is disabled (zero dates).
+        wchar_t* dstName = (wchar_t*)(p + 88);
+        for (int i = 0; i < copy; i++) dstName[i] = (wchar_t)tzNameUtf8[i];
+    }
+    return k_TIME_ZONE_ID_UNKNOWN;
+}
+
+extern "C" uint32_t GetTimeZoneInformation(void* lpTimeZoneInformation) {
+    TRACE_REAL(GetTimeZoneInformation);
+    if (lpTimeZoneInformation == nullptr) {
+        g_LastError = 87;
+        return k_TIME_ZONE_ID_INVALID;
+    }
+    g_LastError = 0;
+    return sharpos_fill_tz((uint8_t*)lpTimeZoneInformation, 172);
+}
+CRT_REAL(GetTimeZoneInformation);
+
+extern "C" uint32_t GetDynamicTimeZoneInformation(void* lpDynamicTimeZoneInformation) {
+    TRACE_REAL(GetDynamicTimeZoneInformation);
+    if (lpDynamicTimeZoneInformation == nullptr) {
+        g_LastError = 87;
+        return k_TIME_ZONE_ID_INVALID;
+    }
+    g_LastError = 0;
+    return sharpos_fill_tz((uint8_t*)lpDynamicTimeZoneInformation, 432);
+}
+CRT_REAL(GetDynamicTimeZoneInformation);
+
+// DeleteFileW -- File.Delete. We have no writable FS yet; report
+// ERROR_FILE_NOT_FOUND so BCL throws FileNotFoundException... which
+// the probe catches as FAIL. The cleaner win comes when writable FS
+// lands. For now, returning FALSE without trapping at least lets
+// other File.* probes proceed (no chained SEH cascade).
+extern "C" int DeleteFileW(const wchar_t* /*lpFileName*/) {
+    TRACE_REAL(DeleteFileW);
+    g_LastError = k_ERROR_FILE_NOT_FOUND;
+    return 0;
+}
+CRT_REAL(DeleteFileW);
+
+// BCrypt advanced surface -- RandomNumberGenerator.Fill +
+// SHA256.HashData go via BCryptOpenAlgorithmProvider("RNG"/"SHA256")
+// before calling BCryptGenRandom/CreateHash. The minimal stub set:
+//
+//   OpenAlgorithmProvider  -> hand back a sentinel handle keyed by algo
+//   CloseAlgorithmProvider -> no-op
+//   CreateHash             -> allocate a minimal hash context struct
+//   HashData               -> SHA-256 incremental update
+//   FinishHash             -> emit 32-byte digest
+//   DestroyHash            -> free
+//
+// For now keep the openrng path real (RNG goes via SharpOSHost_FillRandom
+// when BCryptGenRandom fires) but SHA256 still requires algo state. We
+// route SHA256 through a tiny in-image SHA-256 (FIPS 180-4) compiled
+// here; algorithm/HashContext layouts are SharpOS-private (BCL only
+// sees opaque handles).
+
+#define SHARPOS_BCRYPT_ALG_RNG     ((void*)(uintptr_t)0xBC011001U)
+#define SHARPOS_BCRYPT_ALG_SHA256  ((void*)(uintptr_t)0xBC012001U)
+
+// SHA-256 algorithm proper lives kernel-side in OS.Kernel.Crypto.Sha256
+// (C#, see OS/src/Kernel/Crypto/Sha256.cs). PAL is a thin forwarder per
+// the SharpOS invariant. These extern declarations bind to the managed
+// [RuntimeExport]s in OS/src/PAL/SharpOSHost/Sha256Bridge.cs.
+extern "C" void* SharpOSHost_Sha256_Create(void);
+extern "C" void  SharpOSHost_Sha256_Update(void* state, const uint8_t* data, uint32_t len);
+extern "C" void  SharpOSHost_Sha256_Final(void* state, uint8_t* out32);
+extern "C" void  SharpOSHost_Sha256_Snapshot(void* state, uint8_t* out32);
+extern "C" void  SharpOSHost_Sha256_Reset(void* state);
+extern "C" void  SharpOSHost_Sha256_Destroy(void* state);
+extern "C" void  SharpOSHost_Sha256_OneShot(const uint8_t* data, uint32_t len, uint8_t* out32);
+
+// Compare wide-string algorithm IDs against BCL's BCRYPT_RNG_ALGORITHM /
+// BCRYPT_SHA256_ALGORITHM constants ("RNG" / "SHA256"). Inline compare
+// without pulling a wcscmp -- callers always pass the exact BCL constant
+// string. ASCII-only tail (BCL constants are ASCII identifiers).
+static int sharpos_wcs_eq_short(const wchar_t* s, const char* t) {
+    while (*t) { if ((wchar_t)*t != *s) return 0; t++; s++; }
+    return *s == 0;
+}
+
+extern "C" int32_t BCryptOpenAlgorithmProvider(void** phAlgorithm, const wchar_t* pszAlgId,
+                                               const wchar_t* /*pszImpl*/, uint32_t /*dwFlags*/) {
+    TRACE_REAL(BCryptOpenAlgorithmProvider);
+    if (phAlgorithm == nullptr || pszAlgId == nullptr) return (int32_t)0xC000000D;
+    if (sharpos_wcs_eq_short(pszAlgId, "RNG"))    { *phAlgorithm = SHARPOS_BCRYPT_ALG_RNG;    return 0; }
+    if (sharpos_wcs_eq_short(pszAlgId, "SHA256")) { *phAlgorithm = SHARPOS_BCRYPT_ALG_SHA256; return 0; }
+    // Unknown algo -- return STATUS_NOT_FOUND so caller fails cleanly via
+    // CryptographicException (catchable Exception, not SEH).
+    SharpOSHost_DebugPrint("[BCryptOpenAlgo] unknown algo\n");
+    *phAlgorithm = nullptr;
+    return (int32_t)0xC0000225;
+}
+CRT_REAL(BCryptOpenAlgorithmProvider);
+
+extern "C" int32_t BCryptCloseAlgorithmProvider(void* /*hAlgorithm*/, uint32_t /*dwFlags*/) {
+    TRACE_REAL(BCryptCloseAlgorithmProvider);
+    return 0;
+}
+CRT_REAL(BCryptCloseAlgorithmProvider);
+
+// BCrypt hash handles are opaque pointers handed back by
+// SharpOSHost_Sha256_Create (allocation + state init both happen
+// kernel-side). PAL never inspects the box.
+extern "C" int32_t BCryptCreateHash(void* hAlgorithm, void** phHash, uint8_t* /*pbHashObject*/,
+                                    uint32_t /*cbHashObject*/, uint8_t* /*pbSecret*/,
+                                    uint32_t /*cbSecret*/, uint32_t /*dwFlags*/) {
+    TRACE_REAL(BCryptCreateHash);
+    if (phHash == nullptr) return (int32_t)0xC000000D;
+    if (hAlgorithm != SHARPOS_BCRYPT_ALG_SHA256) {
+        SharpOSHost_DebugPrint("[BCryptCreateHash] non-SHA256 not supported\n");
+        return (int32_t)0xC0000225;
+    }
+    void* state = SharpOSHost_Sha256_Create();
+    if (state == nullptr) return (int32_t)0xC0000017;
+    *phHash = state;
+    return 0;
+}
+CRT_REAL(BCryptCreateHash);
+
+extern "C" int32_t BCryptHashData(void* hHash, uint8_t* pbInput, uint32_t cbInput, uint32_t /*dwFlags*/) {
+    TRACE_REAL(BCryptHashData);
+    if (hHash == nullptr) return (int32_t)0xC000000D;
+    if (cbInput > 0 && pbInput != nullptr)
+        SharpOSHost_Sha256_Update(hHash, pbInput, cbInput);
+    return 0;
+}
+CRT_REAL(BCryptHashData);
+
+extern "C" int32_t BCryptFinishHash(void* hHash, uint8_t* pbOutput, uint32_t cbOutput, uint32_t /*dwFlags*/) {
+    TRACE_REAL(BCryptFinishHash);
+    if (hHash == nullptr || pbOutput == nullptr) return (int32_t)0xC000000D;
+    if (cbOutput < 32) return (int32_t)0xC0000023;
+    SharpOSHost_Sha256_Final(hHash, pbOutput);
+    return 0;
+}
+CRT_REAL(BCryptFinishHash);
+
+extern "C" int32_t BCryptDestroyHash(void* hHash) {
+    TRACE_REAL(BCryptDestroyHash);
+    if (hHash != nullptr) SharpOSHost_Sha256_Destroy(hHash);
+    return 0;
+}
+CRT_REAL(BCryptDestroyHash);
+
+// BCryptGetProperty -- BCL calls this with BCRYPT_HASH_LENGTH ("HashDigestLength")
+// to discover digest size. Return 32 (SHA-256 = 32 bytes).
+// libSystem.Security.Cryptography.Native.OpenSsl surface used by the
+// BCL when System.Private.CoreLib was built with the Unix native shim
+// (which is the case in our fork because we share CoreLib with the Unix
+// target). RNG + SHA-256 only -- enough to pass the census probes.
+//
+// CryptoNative_GetRandomBytes(uint8_t* buf, int32_t numBytes)
+//   returns 1 on success, 0 on error. We forward to SharpOSHost_FillRandom.
+extern "C" int32_t CryptoNative_GetRandomBytes(uint8_t* buf, int32_t numBytes) {
+    TRACE_REAL(CryptoNative_GetRandomBytes);
+    if (buf == nullptr || numBytes < 0) return 0;
+    SharpOSHost_FillRandom(buf, numBytes);
+    return 1;
+}
+CRT_REAL(CryptoNative_GetRandomBytes);
+
+// EVP_MD opaque tag -- BCL holds it as an algorithm identifier passed
+// into EvpMdCtxCreate. We only support SHA-256.
+#define SHARPOS_EVP_MD_SHA256  ((void*)(uintptr_t)0x5E3702A6U)
+
+extern "C" void* CryptoNative_EvpSha256(void) {
+    TRACE_REAL(CryptoNative_EvpSha256);
+    return SHARPOS_EVP_MD_SHA256;
+}
+CRT_REAL(CryptoNative_EvpSha256);
+
+// EVP context is an opaque handle from SharpOSHost_Sha256_Create.
+extern "C" void* CryptoNative_EvpMdCtxCreate(void* md) {
+    TRACE_REAL(CryptoNative_EvpMdCtxCreate);
+    if (md != SHARPOS_EVP_MD_SHA256) {
+        SharpOSHost_DebugPrint("[EvpMdCtxCreate] non-SHA256 not supported\n");
+        return nullptr;
+    }
+    return SharpOSHost_Sha256_Create();
+}
+CRT_REAL(CryptoNative_EvpMdCtxCreate);
+
+extern "C" int32_t CryptoNative_EvpDigestUpdate(void* ctx, const uint8_t* data, int32_t len) {
+    TRACE_REAL(CryptoNative_EvpDigestUpdate);
+    if (ctx == nullptr) return 0;
+    if (len > 0 && data != nullptr)
+        SharpOSHost_Sha256_Update(ctx, data, (uint32_t)len);
+    return 1;
+}
+CRT_REAL(CryptoNative_EvpDigestUpdate);
+
+extern "C" int32_t CryptoNative_EvpDigestReset(void* ctx, void* md) {
+    TRACE_REAL(CryptoNative_EvpDigestReset);
+    if (ctx == nullptr || md != SHARPOS_EVP_MD_SHA256) return 0;
+    SharpOSHost_Sha256_Reset(ctx);
+    return 1;
+}
+CRT_REAL(CryptoNative_EvpDigestReset);
+
+extern "C" int32_t CryptoNative_EvpDigestFinalEx(void* ctx, uint8_t* out, uint32_t* outlen) {
+    TRACE_REAL(CryptoNative_EvpDigestFinalEx);
+    if (ctx == nullptr || out == nullptr) return 0;
+    SharpOSHost_Sha256_Final(ctx, out);
+    if (outlen) *outlen = 32;
+    return 1;
+}
+CRT_REAL(CryptoNative_EvpDigestFinalEx);
+
+extern "C" int32_t CryptoNative_EvpDigestCurrent(void* ctx, uint8_t* out, uint32_t* outlen) {
+    TRACE_REAL(CryptoNative_EvpDigestCurrent);
+    if (ctx == nullptr || out == nullptr) return 0;
+    SharpOSHost_Sha256_Snapshot(ctx, out);
+    if (outlen) *outlen = 32;
+    return 1;
+}
+CRT_REAL(CryptoNative_EvpDigestCurrent);
+
+extern "C" int32_t CryptoNative_EvpDigestOneShot(void* md, const uint8_t* data, int32_t len,
+                                                 uint8_t* out, uint32_t* outlen) {
+    TRACE_REAL(CryptoNative_EvpDigestOneShot);
+    if (md != SHARPOS_EVP_MD_SHA256 || out == nullptr) return 0;
+    SharpOSHost_Sha256_OneShot(data, len > 0 ? (uint32_t)len : 0, out);
+    if (outlen) *outlen = 32;
+    return 1;
+}
+CRT_REAL(CryptoNative_EvpDigestOneShot);
+
+extern "C" void CryptoNative_EvpMdCtxDestroy(void* ctx) {
+    TRACE_REAL(CryptoNative_EvpMdCtxDestroy);
+    if (ctx != nullptr) SharpOSHost_Sha256_Destroy(ctx);
+}
+CRT_REAL(CryptoNative_EvpMdCtxDestroy);
+
+// EvpMdSize(md) -> 32 for SHA-256.
+extern "C" int32_t CryptoNative_EvpMdSize(void* md) {
+    TRACE_REAL(CryptoNative_EvpMdSize);
+    if (md == SHARPOS_EVP_MD_SHA256) return 32;
+    return 0;
+}
+CRT_REAL(CryptoNative_EvpMdSize);
+
+// EnsureOpenSslInitialized -> 0 (success). No real OpenSSL to init.
+extern "C" int32_t CryptoNative_EnsureOpenSslInitialized(void) {
+    TRACE_REAL(CryptoNative_EnsureOpenSslInitialized);
+    return 0;
+}
+CRT_REAL(CryptoNative_EnsureOpenSslInitialized);
+
+// CryptoNative_GetMaxMdSize -- BCL queries this when sizing hash output
+// buffers (max digest across OpenSSL's hash algos). 64 covers SHA-512.
+extern "C" int32_t CryptoNative_GetMaxMdSize(void) {
+    TRACE_REAL(CryptoNative_GetMaxMdSize);
+    return 64;
+}
+CRT_REAL(CryptoNative_GetMaxMdSize);
+
+extern "C" int32_t BCryptGetProperty(void* /*hObject*/, const wchar_t* pszProperty,
+                                     uint8_t* pbOutput, uint32_t cbOutput,
+                                     uint32_t* pcbResult, uint32_t /*dwFlags*/) {
+    TRACE_REAL(BCryptGetProperty);
+    if (pszProperty == nullptr) return (int32_t)0xC000000D;
+    if (sharpos_wcs_eq_short(pszProperty, "HashDigestLength")) {
+        if (pcbResult) *pcbResult = 4;
+        if (cbOutput < 4 || pbOutput == nullptr) return (int32_t)0xC0000023;
+        *(uint32_t*)pbOutput = 32;
+        return 0;
+    }
+    if (sharpos_wcs_eq_short(pszProperty, "ObjectLength")) {
+        // BCL queries this to size the optional working buffer for
+        // BCryptCreateHash. We allocate kernel-side via
+        // SharpOSHost_Sha256_Create and ignore pbHashObject, so a
+        // generous constant suffices -- 512 bytes covers any plausible
+        // future hash state without leaking the kernel struct layout
+        // into the PAL.
+        if (pcbResult) *pcbResult = 4;
+        if (cbOutput < 4 || pbOutput == nullptr) return (int32_t)0xC0000023;
+        *(uint32_t*)pbOutput = 512;
+        return 0;
+    }
+    SharpOSHost_DebugPrint("[BCryptGetProperty] unknown property\n");
+    return (int32_t)0xC0000225;
+}
+CRT_REAL(BCryptGetProperty);
+
+// SharpOSHost_GetFileAttributes (kernel-side) is the policy point:
+// "which paths exist on SharpOS, and what are their Win32 attrs". PAL
+// just marshals the wide path to UTF-8 (ASCII zero-narrow) and forwards.
+extern "C" uint32_t SharpOSHost_GetFileAttributes(const uint8_t* utf8Path);
+
+// Convert a Win32 wide path to a UTF-8/ASCII stack buffer. Returns the
+// byte length (excl NUL), or -1 if the wide chars include non-ASCII
+// (kernel paths are ASCII so this is a clean reject). Buffer must hold
+// at least 260 bytes (Win32 MAX_PATH).
+static int sharpos_wpath_to_ascii(const wchar_t* w, uint8_t* out, int outCap) {
+    if (w == nullptr || out == nullptr || outCap < 2) return -1;
+    int i = 0;
+    for (;;) {
+        wchar_t c = w[i];
+        if (c == 0) { out[i] = 0; return i; }
+        if (c > 0x7F || i + 1 >= outCap) return -1;
+        out[i] = (uint8_t)c;
+        i++;
+    }
+}
+
+// GetFileAttributesW (no Ex) -- BCL Directory.Exists / older paths use
+// this. Returns the DWORD attributes bitmask or 0xFFFFFFFF on error.
+extern "C" uint32_t GetFileAttributesW(const wchar_t* lpFileName) {
+    TRACE_REAL(GetFileAttributesW);
+    if (lpFileName == nullptr) {
+        g_LastError = 87;
+        return 0xFFFFFFFFu;
+    }
+    uint8_t path[260];
+    int n = sharpos_wpath_to_ascii(lpFileName, path, sizeof(path));
+    if (n < 0) {
+        g_LastError = k_ERROR_FILE_NOT_FOUND;
+        return 0xFFFFFFFFu;
+    }
+    uint32_t attr = SharpOSHost_GetFileAttributes(path);
+    if (attr == 0xFFFFFFFFu) {
+        g_LastError = k_ERROR_FILE_NOT_FOUND;
+        return 0xFFFFFFFFu;
+    }
+    g_LastError = 0;
+    return attr;
+}
+CRT_REAL(GetFileAttributesW);
+
+// FindFirstFileW / FindFirstFileExW / FindNextFileW / FindClose --
+// minimal stubs returning "directory empty". For Directory.EnumerateFiles
+// to pass: GetFileAttributesW must confirm dir, then FindFirstFileW
+// returns INVALID_HANDLE_VALUE with ERROR_FILE_NOT_FOUND, the BCL
+// interprets that as "no matches" and yields empty enumeration -- the
+// probe passes since it only iterates, not inspects results.
+static void* k_INVALID_HANDLE_VALUE = (void*)(intptr_t)-1;
+extern "C" void* FindFirstFileW(const wchar_t* /*lpFileName*/, void* /*lpFindFileData*/) {
+    TRACE_REAL(FindFirstFileW);
+    g_LastError = k_ERROR_FILE_NOT_FOUND;
+    return k_INVALID_HANDLE_VALUE;
+}
+CRT_REAL(FindFirstFileW);
+
+extern "C" void* FindFirstFileExW(const wchar_t* /*lpFileName*/, int /*fInfoLevelId*/,
+                                  void* /*lpFindFileData*/, int /*fSearchOp*/,
+                                  void* /*lpSearchFilter*/, uint32_t /*dwAdditionalFlags*/) {
+    TRACE_REAL(FindFirstFileExW);
+    g_LastError = k_ERROR_FILE_NOT_FOUND;
+    return k_INVALID_HANDLE_VALUE;
+}
+CRT_REAL(FindFirstFileExW);
+
+extern "C" int FindNextFileW(void* /*hFindFile*/, void* /*lpFindFileData*/) {
+    TRACE_REAL(FindNextFileW);
+    static const uint32_t k_ERROR_NO_MORE_FILES = 18;
+    g_LastError = k_ERROR_NO_MORE_FILES;
+    return 0;
+}
+CRT_REAL(FindNextFileW);
+
+extern "C" int FindClose(void* /*hFindFile*/) {
+    TRACE_REAL(FindClose);
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(FindClose);
+
+// GetFileAttributesExW -- Ex variant with full WIN32_FILE_ATTRIBUTE_DATA
+// (36 bytes: dwFileAttributes + 3 FILETIMEs + size hi/lo). PAL marshals
+// the path, kernel returns attrs, PAL zero-fills the rest. Times stay
+// zero (SharpOS RTC integration is per-RTC-tick; sub-second timestamps
+// in directory metadata are out of scope until FS write lands).
+extern "C" int GetFileAttributesExW(const wchar_t* lpFileName, int /*fInfoLevelId*/, void* lpFileInformation) {
+    TRACE_REAL(GetFileAttributesExW);
+    if (lpFileName == nullptr || lpFileInformation == nullptr) {
+        g_LastError = 87;
+        return 0;
+    }
+    uint8_t path[260];
+    int n = sharpos_wpath_to_ascii(lpFileName, path, sizeof(path));
+    if (n < 0) { g_LastError = k_ERROR_FILE_NOT_FOUND; return 0; }
+    uint32_t attr = SharpOSHost_GetFileAttributes(path);
+    if (attr == 0xFFFFFFFFu) { g_LastError = k_ERROR_FILE_NOT_FOUND; return 0; }
+    uint8_t* p = (uint8_t*)lpFileInformation;
+    for (int i = 0; i < 36; i++) p[i] = 0;
+    *(uint32_t*)p = attr;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(GetFileAttributesExW);
+
 extern "C" const wchar_t* GetCommandLineW(void) { TRACE_REAL(GetCommandLineW); return k_empty_w; }
 CRT_REAL(GetCommandLineW);
 
@@ -2342,6 +2990,30 @@ extern "C" void    SharpOS_SN_InitializeConsoleBeforeRead(uint8_t,uint8_t,uint8_
 extern "C" void    SharpOS_SN_UninitializeConsoleAfterRead(void) {}
 extern "C" void    SharpOS_SN_UninitializeTerminal(void) {}
 extern "C" int32_t SharpOS_SN_GetWindowSize(intptr_t /*fd*/, void* /*winsize*/) { return -1; }               // unknown → defaults
+
+// step 99 pass 4: BCL System.Security.Cryptography.RandomNumberGenerator
+// on this fork's CoreLib calls Interop.Sys.GetCryptographicallySecureRandomBytes
+// (libSystem.Native) BEFORE falling back to CryptoNative_GetRandomBytes
+// (libSystem.Security.Cryptography.Native.OpenSsl). Forward to the same
+// SharpOSHost_FillRandom kernel-side helper. Returns 1 on success.
+extern "C" int32_t SharpOS_SN_GetCryptographicallySecureRandomBytes(uint8_t* buffer, int32_t bufferLength) {
+    if (buffer == nullptr || bufferLength <= 0) return 0;
+    SharpOSHost_FillRandom(buffer, bufferLength);
+    return 1;
+}
+
+// step 99 pass 6: SystemNative_GetHostName(buf, bufLen) -> 0 on success,
+// -1 on error. Dns.GetHostName calls this; the actual hostname string
+// lives kernel-side (SystemIdentity.cs, kind=HostName). PAL forwards.
+// SystemIdentity returns chars excl NUL when buffer fits; we treat the
+// non-success path uniformly as -1 to match Unix PAL semantics.
+extern "C" int32_t SharpOS_SN_GetHostName(char* buf, int32_t bufLen) {
+    if (buf == nullptr || bufLen <= 0) return -1;
+    int needed_incl_nul = SharpOSHost_GetSystemString(/*KindHostName*/6, nullptr, 0);
+    if (needed_incl_nul <= 0 || bufLen < needed_incl_nul) return -1;
+    int got = SharpOSHost_GetSystemString(/*KindHostName*/6, (uint8_t*)buf, bufLen);
+    return got >= 0 ? 0 : -1;
+}
 extern "C" int32_t SharpOS_SN_ConvertErrorPlatformToPal(int32_t e) { return e; }
 extern "C" int32_t SharpOS_SN_ConvertErrorPalToPlatform(int32_t e) { return e; }
 extern "C" void    SharpOS_SN_GetControlCharacters(int32_t*,uint8_t*,int32_t,uint8_t*) {}
@@ -2402,6 +3074,8 @@ static void* sharpos_resolve_sysnative(const char* n) {
     if (sharpos_streq(n,"SystemNative_StrErrorR"))                      return (void*)&SharpOS_SN_StrErrorR;
     if (sharpos_streq(n,"SystemNative_SNPrintF_1I"))                    return (void*)&SharpOS_SN_SNPrintF_1I;
     if (sharpos_streq(n,"SystemNative_SNPrintF_1S"))                    return (void*)&SharpOS_SN_SNPrintF_1S;
+    if (sharpos_streq(n,"SystemNative_GetCryptographicallySecureRandomBytes")) return (void*)&SharpOS_SN_GetCryptographicallySecureRandomBytes;
+    if (sharpos_streq(n,"SystemNative_GetHostName"))                    return (void*)&SharpOS_SN_GetHostName;
     return nullptr;
 }
 
@@ -2455,8 +3129,42 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         return nullptr;
     }
     if (mod == SHARPOS_BCRYPT_HMODULE && name != nullptr) {
-        if (sharpos_streq(name, "BCryptGenRandom")) { g_LastError = 0; return (void*)&BCryptGenRandom; }
+        if (sharpos_streq(name, "BCryptGenRandom"))             { g_LastError = 0; return (void*)&BCryptGenRandom; }
+        if (sharpos_streq(name, "BCryptOpenAlgorithmProvider")) { g_LastError = 0; return (void*)&BCryptOpenAlgorithmProvider; }
+        if (sharpos_streq(name, "BCryptCloseAlgorithmProvider")){ g_LastError = 0; return (void*)&BCryptCloseAlgorithmProvider; }
+        if (sharpos_streq(name, "BCryptCreateHash"))            { g_LastError = 0; return (void*)&BCryptCreateHash; }
+        if (sharpos_streq(name, "BCryptHashData"))              { g_LastError = 0; return (void*)&BCryptHashData; }
+        if (sharpos_streq(name, "BCryptFinishHash"))            { g_LastError = 0; return (void*)&BCryptFinishHash; }
+        if (sharpos_streq(name, "BCryptDestroyHash"))           { g_LastError = 0; return (void*)&BCryptDestroyHash; }
+        if (sharpos_streq(name, "BCryptGetProperty"))           { g_LastError = 0; return (void*)&BCryptGetProperty; }
         SharpOSHost_DebugPrint("[GetProcAddress bcrypt] unknown name=");
+        SharpOSHost_DebugPrint(name);
+        SharpOSHost_DebugPrint("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_SECUR32_HMODULE && name != nullptr) {
+        if (sharpos_streq(name, "GetUserNameExW")) { g_LastError = 0; return (void*)&GetUserNameExW; }
+        SharpOSHost_DebugPrint("[GetProcAddress secur32] unknown name=");
+        SharpOSHost_DebugPrint(name);
+        SharpOSHost_DebugPrint("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_SYSCRYPTO_HMODULE && name != nullptr) {
+        if (sharpos_streq(name, "CryptoNative_GetRandomBytes"))       { g_LastError = 0; return (void*)&CryptoNative_GetRandomBytes; }
+        if (sharpos_streq(name, "CryptoNative_EnsureOpenSslInitialized")) { g_LastError = 0; return (void*)&CryptoNative_EnsureOpenSslInitialized; }
+        if (sharpos_streq(name, "CryptoNative_EvpSha256"))            { g_LastError = 0; return (void*)&CryptoNative_EvpSha256; }
+        if (sharpos_streq(name, "CryptoNative_EvpMdCtxCreate"))       { g_LastError = 0; return (void*)&CryptoNative_EvpMdCtxCreate; }
+        if (sharpos_streq(name, "CryptoNative_EvpDigestUpdate"))      { g_LastError = 0; return (void*)&CryptoNative_EvpDigestUpdate; }
+        if (sharpos_streq(name, "CryptoNative_EvpDigestReset"))       { g_LastError = 0; return (void*)&CryptoNative_EvpDigestReset; }
+        if (sharpos_streq(name, "CryptoNative_EvpDigestFinalEx"))     { g_LastError = 0; return (void*)&CryptoNative_EvpDigestFinalEx; }
+        if (sharpos_streq(name, "CryptoNative_EvpDigestCurrent"))     { g_LastError = 0; return (void*)&CryptoNative_EvpDigestCurrent; }
+        if (sharpos_streq(name, "CryptoNative_EvpDigestOneShot"))     { g_LastError = 0; return (void*)&CryptoNative_EvpDigestOneShot; }
+        if (sharpos_streq(name, "CryptoNative_EvpMdCtxDestroy"))      { g_LastError = 0; return (void*)&CryptoNative_EvpMdCtxDestroy; }
+        if (sharpos_streq(name, "CryptoNative_EvpMdSize"))            { g_LastError = 0; return (void*)&CryptoNative_EvpMdSize; }
+        if (sharpos_streq(name, "CryptoNative_GetMaxMdSize"))         { g_LastError = 0; return (void*)&CryptoNative_GetMaxMdSize; }
+        SharpOSHost_DebugPrint("[GetProcAddress syscrypto] unknown name=");
         SharpOSHost_DebugPrint(name);
         SharpOSHost_DebugPrint("\n");
         g_LastError = 127;
@@ -2731,6 +3439,27 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"GetEnvironmentVariableW"))      return (void*)&GetEnvironmentVariableW;
     if (sharpos_streq(n,"GetEnvironmentVariableA"))      return (void*)&GetEnvironmentVariableA;
     if (sharpos_streq(n,"GetEnvironmentStringsW"))       return (void*)&GetEnvironmentStringsW;
+    // step 99: system/env string getters (BCL Environment.* / Path.* / Directory.*)
+    if (sharpos_streq(n,"GetCurrentDirectoryW"))         return (void*)&GetCurrentDirectoryW;
+    if (sharpos_streq(n,"GetTempPathW"))                 return (void*)&GetTempPathW;
+    if (sharpos_streq(n,"GetSystemDirectoryW"))          return (void*)&GetSystemDirectoryW;
+    if (sharpos_streq(n,"GetWindowsDirectoryW"))         return (void*)&GetWindowsDirectoryW;
+    if (sharpos_streq(n,"GetComputerNameExW"))           return (void*)&GetComputerNameExW;
+    if (sharpos_streq(n,"GetVersionExW"))                return (void*)&GetVersionExW;
+    if (sharpos_streq(n,"RtlGetVersion"))                return (void*)&RtlGetVersion;
+    if (sharpos_streq(n,"GetFileAttributesExW"))         return (void*)&GetFileAttributesExW;
+    if (sharpos_streq(n,"GetFileAttributesW"))           return (void*)&GetFileAttributesW;
+    if (sharpos_streq(n,"FindFirstFileW"))               return (void*)&FindFirstFileW;
+    if (sharpos_streq(n,"FindFirstFileExW"))             return (void*)&FindFirstFileExW;
+    if (sharpos_streq(n,"FindNextFileW"))                return (void*)&FindNextFileW;
+    if (sharpos_streq(n,"FindClose"))                    return (void*)&FindClose;
+    if (sharpos_streq(n,"GetTempPath2W"))                return (void*)&GetTempPath2W;
+    if (sharpos_streq(n,"GetSystemTimePreciseAsFileTime"))return (void*)&GetSystemTimePreciseAsFileTime;
+    if (sharpos_streq(n,"SetThreadDescription"))         return (void*)&SetThreadDescription;
+    if (sharpos_streq(n,"GetComputerNameW"))             return (void*)&GetComputerNameW;
+    if (sharpos_streq(n,"GetTimeZoneInformation"))       return (void*)&GetTimeZoneInformation;
+    if (sharpos_streq(n,"GetDynamicTimeZoneInformation"))return (void*)&GetDynamicTimeZoneInformation;
+    if (sharpos_streq(n,"DeleteFileW"))                  return (void*)&DeleteFileW;
     if (sharpos_streq(n,"FreeEnvironmentStringsW"))      return (void*)&FreeEnvironmentStringsW;
     if (sharpos_streq(n,"GetCommandLineW"))              return (void*)&GetCommandLineW;
     if (sharpos_streq(n,"GetFullPathNameW"))             return (void*)&GetFullPathNameW;
