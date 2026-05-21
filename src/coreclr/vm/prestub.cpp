@@ -427,12 +427,18 @@ PCODE MethodDesc::PrepareILBasedCode(PrepareCodeConfig* pConfig)
         LOG((LF_CLASSLOADER, LL_INFO1000000,
             "    In PrepareILBasedCode, calling JitCompileCode\n"));
         pCode = JitCompileCode(pConfig);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[PIBC] JitCompileCode returned\n");
+#endif
     }
     else
     {
         DACNotifyCompilationFinished(this, pCode);
     }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[PIBC] returning pCode\n");
+#endif
     return pCode;
 }
 
@@ -731,6 +737,9 @@ PCODE MethodDesc::JitCompileCode(PrepareCodeConfig* pConfig)
                 }
             }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOSHost_DebugPrint("[prestub] -> JitCompileCodeLockedEventWrapper\n");
+#endif
             return JitCompileCodeLockedEventWrapper(pConfig, pEntryLock);
         }
     }
@@ -798,6 +807,10 @@ PCODE MethodDesc::JitCompileCodeLockedEventWrapper(PrepareCodeConfig* pConfig, J
 {
     STANDARD_VM_CONTRACT;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[JCCLEW] entry\n");
+#endif
+
     PCODE pCode = (PCODE)NULL;
     ULONG sizeOfCode = 0;
 
@@ -852,11 +865,18 @@ PCODE MethodDesc::JitCompileCodeLockedEventWrapper(PrepareCodeConfig* pConfig, J
     COR_ILMETHOD_DECODER* pilHeader = GetAndVerifyILHeader(this, pConfig, &ilDecoderTemp);
     bool isInterpreterCode = false;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[JCCLEW] pre-JitCompileCodeLocked\n");
+#endif
+
     if (!ETW_TRACING_CATEGORY_ENABLED(MICROSOFT_WINDOWS_DOTNETRUNTIME_PROVIDER_DOTNET_Context,
         TRACE_LEVEL_VERBOSE,
         CLR_JIT_KEYWORD))
     {
         pCode = JitCompileCodeLocked(pConfig, pilHeader, pEntry, &sizeOfCode, &isInterpreterCode);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[JCCLEW] JitCompileCodeLocked returned (path 1)\n");
+#endif
     }
     else
     {
@@ -950,6 +970,10 @@ PCODE MethodDesc::JitCompileCodeLocked(PrepareCodeConfig* pConfig, COR_ILMETHOD_
     _ASSERTE(pConfig != NULL);
     _ASSERTE(pEntry != NULL);
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[JCCL] entry\n");
+#endif
+
     PCODE pCode = (PCODE)NULL;
     bool isTier0 = false;
     PCODE pOtherCode = (PCODE)NULL;
@@ -957,8 +981,14 @@ PCODE MethodDesc::JitCompileCodeLocked(PrepareCodeConfig* pConfig, COR_ILMETHOD_
     EX_TRY
     {
         Thread::CurrentPrepareCodeConfigHolder threadPrepareCodeConfigHolder(GetThread(), pConfig);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[JCCL] pre-UnsafeJitFunction\n");
+#endif
 
         pCode = UnsafeJitFunction(pConfig, pilHeader, &isTier0, pIsInterpreterCode, pSizeOfCode);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrint("[JCCL] UnsafeJitFunction returned\n");
+#endif
     }
     EX_CATCH
     {
@@ -2020,9 +2050,18 @@ extern "C" PCODE STDCALL PreStubWorker(TransitionBlock* pTransitionBlock, Method
             {
                 pbRetVal = pMD->DoPrestub(pDispatchingMT, CallerGCMode::Coop);
             }
+#if defined(TARGET_SHARPOS)
+            SharpOSHost_DebugPrint("[PSW] DoPrestub returned\n");
+#endif
 
             UNINSTALL_UNWIND_AND_CONTINUE_HANDLER_EX(propagateExceptionToNativeCode);
+#if defined(TARGET_SHARPOS)
+            SharpOSHost_DebugPrint("[PSW] post-UNINSTALL_UNWIND_AND_CONTINUE\n");
+#endif
             UNINSTALL_MANAGED_EXCEPTION_DISPATCHER_EX(propagateExceptionToNativeCode);
+#if defined(TARGET_SHARPOS)
+            SharpOSHost_DebugPrint("[PSW] post-UNINSTALL_MANAGED_EXCEPTION\n");
+#endif
         }
         EX_CATCH
         {
@@ -2038,9 +2077,15 @@ extern "C" PCODE STDCALL PreStubWorker(TransitionBlock* pTransitionBlock, Method
 
             // Give debugger opportunity to stop here
             ThePreStubPatch();
+#if defined(TARGET_SHARPOS)
+            SharpOSHost_DebugPrint("[PSW] post-ThePreStubPatch\n");
+#endif
         }
 
         pPFrame->Pop(CURRENT_THREAD);
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[PSW] post-pPFrame->Pop, returning\n");
+#endif
     }
 
     POSTCONDITION(pbRetVal != NULL);
@@ -2271,13 +2316,25 @@ PCODE MethodDesc::DoPrestub(MethodTable *pDispatchingMT, CallerGCMode callerGCMo
 #ifdef FEATURE_CODE_VERSIONING
     if (IsVersionable())
     {
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[DoPrestub] versionable path\n");
+#endif
         bool doBackpatch = true;
         bool doFullBackpatch = false;
         pCode = GetCodeVersionManager()->PublishVersionableCodeIfNecessary(this, callerGCMode, &doBackpatch, &doFullBackpatch);
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[DoPrestub] PublishVersionableCode returned\n");
+#endif
 
         if (doBackpatch)
         {
+#if defined(TARGET_SHARPOS)
+            SharpOSHost_DebugPrint("[DoPrestub] pre-DoBackpatch (versionable)\n");
+#endif
             pCode = DoBackpatch(pMT, pDispatchingMT, doFullBackpatch);
+#if defined(TARGET_SHARPOS)
+            SharpOSHost_DebugPrint("[DoPrestub] DoBackpatch returned (versionable)\n");
+#endif
         }
         else
         {
@@ -2425,6 +2482,9 @@ Return:
     }
 #endif // FEATURE_INTERPRETER && FEATURE_JIT
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[DoPrestub] returning pCode\n");
+#endif
     RETURN pCode;
 }
 

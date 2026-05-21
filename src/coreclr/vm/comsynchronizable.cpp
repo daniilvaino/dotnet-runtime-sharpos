@@ -31,6 +31,9 @@
 #include "utilcode.h"
 #endif
 
+#if defined(TARGET_SHARPOS)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+#endif
 
 // For the following helpers, we make no attempt to synchronize.  The app developer
 // is responsible for managing their own race conditions.
@@ -130,11 +133,20 @@ static void KickOffThread_Worker(LPVOID ptr)
     }
     CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[KOT_Worker] entry\n");
+#endif
     PREPARE_NONVIRTUAL_CALLSITE(METHOD__THREAD__START_CALLBACK);
     DECLARE_ARGHOLDER_ARRAY(args, 1);
     args[ARGNUM_0] = OBJECTREF_TO_ARGHOLDER(GetThread()->GetExposedObjectRaw());
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[KOT_Worker] pre-CALL_MANAGED\n");
+#endif
     CALL_MANAGED_METHOD_NORET(args);
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[KOT_Worker] post-CALL_MANAGED\n");
+#endif
 }
 
 // Helper to avoid two EX_TRY/EX_CATCH blocks in one function
@@ -164,6 +176,7 @@ static void PulseAllHelper(Thread* pThread)
 }
 
 // When an exposed thread is started by Win32, this is where it starts.
+
 static ULONG WINAPI KickOffThread(void* pass)
 {
 
@@ -175,11 +188,22 @@ static ULONG WINAPI KickOffThread(void* pass)
     }
     CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[KOT] entry\n");
+#endif
+
     Thread* pThread = (Thread*)pass;
     _ASSERTE(pThread != NULL);
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[KOT] pre-HasStarted\n");
+#endif
+
     if (pThread->HasStarted())
     {
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[KOT] HasStarted ok\n");
+#endif
         // Do not swallow the unhandled exception here
         //
 
@@ -201,17 +225,48 @@ static ULONG WINAPI KickOffThread(void* pass)
 
         _ASSERTE(GetThread() == pThread);        // Now that it's started
 
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[KOT] pre-ManagedThreadBase::KickOff\n");
+#endif
         ManagedThreadBase::KickOff(KickOffThread_Worker, NULL);
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[KOT] post-ManagedThreadBase::KickOff\n");
+#endif
 
+#if defined(TARGET_SHARPOS)
+        // Phase E9: PulseAllHelper acquires the Thread's managed object
+        // monitor and PulseAll's to wake any managed-side `Monitor.Wait`
+        // observers on the Thread. SharpOS Join() doesn't use that path
+        // -- it blocks on the kernel JoinEvent set by HostedTrampoline at
+        // thread exit (WaitForSingleObject route in ThreadStubs.cs). The
+        // managed-monitor PulseAll path needs PAL surface we haven't
+        // bridged yet (syncblock contended fallback uses kernel events
+        // via AwareLock) and silently #PFs on the hosted thread. Skip it
+        // so the worker can reach DestroyThread cleanly.
+        SharpOSHost_DebugPrint("[KOT] PulseAllHelper skipped (SHARPOS)\n");
+#else
         PulseAllHelper(pThread);
+#endif
 
         GCX_PREEMP_NO_DTOR();
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[KOT] post-GCX_PREEMP_NO_DTOR\n");
+#endif
 
         pThread->ClearThreadCPUGroupAffinity();
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[KOT] post-ClearThreadCPUGroupAffinity\n");
+#endif
 
         DestroyThread(pThread);
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[KOT] post-DestroyThread\n");
+#endif
     }
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[KOT] returning 0\n");
+#endif
     return 0;
 }
 

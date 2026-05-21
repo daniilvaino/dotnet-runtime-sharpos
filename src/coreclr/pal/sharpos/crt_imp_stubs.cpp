@@ -46,6 +46,20 @@ extern "C" __attribute__((weak)) uint32_t SharpOSHost_FileGetSize(void* /*h*/) {
 extern "C" __attribute__((weak)) int64_t SharpOSHost_FileSetPosition(void* /*h*/, int64_t /*dist*/, uint32_t /*origin*/) { return -1; }
 extern "C" __attribute__((weak)) void SharpOSHost_FileClose(void* /*h*/) {}
 
+// Phase E9.a — threading PAL bridge. Defined in OS/src/PAL/SharpOSHost/
+// ThreadStubs.cs (kernel-side). Weak fallbacks for the standalone
+// coreclr.dll smoke target keep the symbols resolvable; in the SharpOS
+// kernel image the strong managed exports win and these are dropped.
+extern "C" __attribute__((weak)) uint64_t SharpOSHost_CreateThread(void* /*startAddr*/, void* /*param*/, uint32_t /*creationFlags*/, uint32_t* /*tid*/) { return 0; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_ResumeThread(uint64_t /*h*/) { return 0; }
+extern "C" __attribute__((weak)) void     SharpOSHost_ExitThread(uint32_t /*code*/) { for (;;) __asm__ volatile("hlt"); }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetCurrentThreadId() { return 1; }
+extern "C" __attribute__((weak)) void*    SharpOSHost_GetCurrentThread() { return (void*)(intptr_t)-2; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_WaitForSingleObject(uint64_t /*h*/, uint32_t /*ms*/) { return 0; }
+extern "C" __attribute__((weak)) int      SharpOSHost_CloseHandle(uint64_t /*h*/) { return 1; }
+extern "C" __attribute__((weak)) void     SharpOSHost_Sleep(uint32_t /*ms*/) {}
+extern "C" __attribute__((weak)) int      SharpOSHost_SwitchToThread() { return 1; }
+
 static void __sharpos_crt_trap_common(const char* name, uint64_t caller_rip)
 {
     SharpOSHost_DebugPrint("[CRT trap] ");
@@ -162,7 +176,25 @@ CRT_STUB(CreateFileMappingA)
 CRT_STUB(CreateProcessW)
 // CreateSemaphoreExW — real impl below (single-thread fake handle)
 // CreateThread — real impl below (fake handle; thread function never runs)
-CRT_STUB(DebugBreak)
+// DebugBreak — CoreCLR `_DbgBreak()` macro expands to this. In a real
+// Windows env this would trap to attached debugger; we have none.
+// Pre-E9.a we kept CRT_STUB (halt) but that was OK only because fake
+// threading never tripped Debug asserts. Real threading exposes hot
+// _ASSERTE paths -- halting on first hit is useless. Log caller RIP
+// and CONTINUE; lets us see which assert fires and whether the runtime
+// survives it. Accepts the risk that continuing past a violated
+// invariant may cause downstream weirdness -- that's the diagnostic
+// signal we want.
+//
+// CRT_REAL is defined later in the file; expand it inline here so the
+// __imp_ alias is emitted at the same point as the function body.
+extern "C" void DebugBreak() {
+    SharpOSHost_DebugPrint("[DbgBrk] caller=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)__builtin_return_address(0));
+    SharpOSHost_DebugPrint("\n");
+    // no halt
+}
+extern "C" void* __imp_DebugBreak = (void*)&DebugBreak;
 // DecodePointer — real impl below
 // DeleteCriticalSection — real impl below
 CRT_STUB(DisconnectNamedPipe)
@@ -268,10 +300,9 @@ CRT_STUB(SetThreadContext)
 CRT_STUB(SetThreadToken)
 CRT_STUB(SetUnhandledExceptionFilter)
 CRT_STUB(SignalObjectAndWait)
-CRT_STUB(Sleep)
+// Sleep / SleepEx / SwitchToThread — real impl below (Phase E9.a, routed
+// to SharpOSHost_Sleep / SharpOSHost_SwitchToThread).
 // SleepConditionVariableSRW — real impl below
-CRT_STUB(SleepEx)
-CRT_STUB(SwitchToThread)
 // TerminateProcess — real impl below (no-op; would otherwise tear kernel down)
 CRT_STUB(UnhandledExceptionFilter)
 // UnmapViewOfFile — real impl below (no-op; GC reclaims when handle dropped)
@@ -721,11 +752,11 @@ CRT_REAL(GetSystemTime);
 
 extern "C" void* GetCurrentProcess(void)      { TRACE_REAL(GetCurrentProcess);   return (void*)(intptr_t)-1; }
 CRT_REAL(GetCurrentProcess);
-extern "C" void* GetCurrentThread(void)       { TRACE_REAL(GetCurrentThread);    return (void*)(intptr_t)-2; }
+extern "C" void* GetCurrentThread(void)       { TRACE_REAL(GetCurrentThread);    return SharpOSHost_GetCurrentThread(); }
 CRT_REAL(GetCurrentThread);
 extern "C" uint32_t GetCurrentProcessId(void) { TRACE_REAL(GetCurrentProcessId); return 1; }
 CRT_REAL(GetCurrentProcessId);
-extern "C" uint32_t GetCurrentThreadId(void)  { TRACE_REAL(GetCurrentThreadId);  return 1; }
+extern "C" uint32_t GetCurrentThreadId(void)  { TRACE_REAL(GetCurrentThreadId);  return SharpOSHost_GetCurrentThreadId(); }
 CRT_REAL(GetCurrentThreadId);
 
 static uint32_t g_LastError = 0;
@@ -1247,38 +1278,76 @@ extern "C" int ReleaseSemaphore(void* /*h*/, int32_t /*lRelease*/, int32_t* lpPr
 }
 CRT_REAL(ReleaseSemaphore);
 
-extern "C" int CloseHandle(void* /*h*/) { TRACE_REAL(CloseHandle); g_LastError = 0; return 1; }
+extern "C" int CloseHandle(void* h) {
+    TRACE_REAL(CloseHandle);
+    g_LastError = 0;
+    return SharpOSHost_CloseHandle((uint64_t)(uintptr_t)h);
+}
 CRT_REAL(CloseHandle);
 
-// WAIT_OBJECT_0 = 0 (signaled). Nothing actually waits — single-thread.
-extern "C" uint32_t WaitForSingleObject(void* /*h*/, uint32_t /*ms*/)             { TRACE_REAL(WaitForSingleObject);    return 0; }
+// Phase E9.a: routed to kernel SharpOSHost_WaitForSingleObject which
+// blocks on Thread.JoinEvent / Event.Wait / Semaphore.Wait as appropriate.
+// WAIT_OBJECT_0 = 0 (signaled), WAIT_FAILED = 0xFFFFFFFF.
+extern "C" uint32_t WaitForSingleObject(void* h, uint32_t ms) {
+    TRACE_REAL(WaitForSingleObject);
+    return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)h, ms);
+}
 CRT_REAL(WaitForSingleObject);
-extern "C" uint32_t WaitForSingleObjectEx(void* /*h*/, uint32_t /*ms*/, int /*alert*/) { TRACE_REAL(WaitForSingleObjectEx); return 0; }
+extern "C" uint32_t WaitForSingleObjectEx(void* h, uint32_t ms, int /*alert*/) {
+    TRACE_REAL(WaitForSingleObjectEx);
+    return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)h, ms);
+}
 CRT_REAL(WaitForSingleObjectEx);
 extern "C" uint32_t WaitForMultipleObjects(uint32_t /*n*/, void* /*ph*/, int /*all*/, uint32_t /*ms*/)              { TRACE_REAL(WaitForMultipleObjects);   return 0; }
 CRT_REAL(WaitForMultipleObjects);
 extern "C" uint32_t WaitForMultipleObjectsEx(uint32_t /*n*/, void* /*ph*/, int /*all*/, uint32_t /*ms*/, int /*alert*/) { TRACE_REAL(WaitForMultipleObjectsEx); return 0; }
 CRT_REAL(WaitForMultipleObjectsEx);
 
-// --- Threading: single-thread fakes ---
+// --- Threading: Phase E9.a real bridge to kernel scheduler ---
 //
-// SharpOS boot path runs on ONE thread. CoreCLR wants finalizer threads,
-// EventPipe workers, GC helper threads, etc. We fake-create them by
-// returning a unique handle but NEVER run the thread function. Side
-// effect: background work CoreCLR scheduled (e.g. async finalization
-// queue draining) won't happen. For Phase 6.1.b we don't exercise those
-// paths from the kernel.
+// Pre-E9.a these were fakes: CreateThread returned a unique handle but
+// never started the thread function (CoreCLR's finalizer / EventPipe /
+// GC helpers all faked). Post-E9.a CreateThread routes to
+// SharpOSHost_CreateThread which spawns a real kernel.Thread via
+// Scheduler.SpawnHosted; WaitForSingleObject blocks on Thread.JoinEvent;
+// CloseHandle releases the kernel-side HandleTable slot.
+//
+// Sleep / SwitchToThread similarly bridge to Scheduler.Sleep /
+// Scheduler.Yield. SleepEx delegates to Sleep (alertable wait
+// extension is a no-op until APC queue lands).
 
 extern "C" void* CreateThread(void* /*lpThreadAttrs*/, size_t /*dwStackSize*/,
-                              void* /*lpStartAddr*/, void* /*lpParam*/,
-                              uint32_t /*dwCreationFlags*/, uint32_t* lpThreadId) {
+                              void* lpStartAddr, void* lpParam,
+                              uint32_t dwCreationFlags, uint32_t* lpThreadId) {
     TRACE_REAL(CreateThread);
-    uintptr_t h = ++g_fakeHandleCounter;
-    if (lpThreadId) *lpThreadId = (uint32_t)h;
+    // CoreCLR (vm/threads.cpp:2145) always passes CREATE_SUSPENDED (0x4)
+    // and follows with ResumeThread after post-init. dwCreationFlags is
+    // forwarded so the kernel can honor it; dwStackSize stays ignored
+    // (kernel uses a fixed 1 MiB host-thread stack today).
+    uint64_t h = SharpOSHost_CreateThread(lpStartAddr, lpParam, dwCreationFlags, lpThreadId);
     g_LastError = 0;
-    return (void*)h;
+    return (void*)(uintptr_t)h;
 }
 CRT_REAL(CreateThread);
+
+extern "C" void Sleep(uint32_t ms) {
+    TRACE_REAL(Sleep);
+    SharpOSHost_Sleep(ms);
+}
+CRT_REAL(Sleep);
+
+extern "C" uint32_t SleepEx(uint32_t ms, int /*alertable*/) {
+    TRACE_REAL(SleepEx);
+    SharpOSHost_Sleep(ms);
+    return 0;   // WAIT_OBJECT_0 / non-alerted return
+}
+CRT_REAL(SleepEx);
+
+extern "C" int SwitchToThread() {
+    TRACE_REAL(SwitchToThread);
+    return SharpOSHost_SwitchToThread();
+}
+CRT_REAL(SwitchToThread);
 
 // SetThreadErrorMode — thread-local error mode (controls how Win32 errors
 // propagate). No-op: we don't have a meaningful error mode mechanism on
@@ -1290,6 +1359,25 @@ extern "C" int SetThreadErrorMode(uint32_t /*dwNewMode*/, uint32_t* lpOldMode) {
     return 1;
 }
 CRT_REAL(SetThreadErrorMode);
+
+// SetThreadStackGuarantee -- Win32 API that resizes the guard-page region
+// at the bottom of the calling thread's stack. CoreCLR's
+// Thread::CLRSetThreadStackGuarantee invokes it from inside HasStarted
+// (Debug builds always; Release on the StackOverflow setup path) to make
+// room for SO EH dispatch. On SharpOS we have no guard pages today --
+// stacks are flat physical pages allocated by Scheduler. Return success
+// without touching anything; CoreCLR proceeds with its cached new size
+// value but the next stack overflow simply pages onto a #PF without the
+// extra cushion (acceptable until the Phase-E stack guard work lands).
+// *pStackSizeInBytes is BOTH the requested new guard size AND the
+// returned previous size; we leave it unchanged so the caller doesn't
+// observe a confusing zero.
+extern "C" int SetThreadStackGuarantee(uint32_t* /*pStackSizeInBytes*/) {
+    TRACE_REAL(SetThreadStackGuarantee);
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SetThreadStackGuarantee);
 
 // CreateFileMappingW — wrap our FileState handle as a mapping handle.
 // CoreCLR uses CreateFileMapping(hFile, ...) + MapViewOfFile к load PE
@@ -1687,12 +1775,13 @@ extern "C" int DuplicateHandle(void* /*srcProc*/, void* srcHandle, void* /*tgtPr
 }
 CRT_REAL(DuplicateHandle);
 
-extern "C" void ExitThread(uint32_t /*exitCode*/) {
+extern "C" void ExitThread(uint32_t exitCode) {
     TRACE_REAL(ExitThread);
-    // Can't actually terminate the single thread we have. Spin halt — if
-    // this gets called we're in unexpected territory and want a visible
-    // hang rather than silent fall-through into garbage.
-    for (;;) __asm__ volatile("hlt");
+    // Phase E9.a: route to kernel SharpOSHost_ExitThread which marks the
+    // current kernel.Thread HasExited + signals JoinEvent + Scheduler.Exit.
+    // Never returns.
+    SharpOSHost_ExitThread(exitCode);
+    for (;;) __asm__ volatile("hlt");   // unreachable; defensive
 }
 CRT_REAL(ExitThread);
 
@@ -1708,9 +1797,13 @@ extern "C" int SetThreadPriority(void* /*hThread*/, int /*priority*/) {
 }
 CRT_REAL(SetThreadPriority);
 
-extern "C" uint32_t ResumeThread(void* /*hThread*/) {
+extern "C" uint32_t ResumeThread(void* hThread) {
     TRACE_REAL(ResumeThread);
-    return 0;  // suspend count was 0 (we never suspended)
+    // Phase E9 -- threads created with CREATE_SUSPENDED sit in `New`
+    // state until ResumeThread transitions them to Runnable. Returns
+    // the previous suspend count per Win32 convention (1 = was paused,
+    // 0 = wasn't, -1 = error).
+    return SharpOSHost_ResumeThread((uint64_t)(uintptr_t)hThread);
 }
 CRT_REAL(ResumeThread);
 
@@ -2604,6 +2697,7 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"GetThreadPriority"))            return (void*)&GetThreadPriority;
     if (sharpos_streq(n,"SetThreadPriority"))            return (void*)&SetThreadPriority;
     if (sharpos_streq(n,"SetThreadErrorMode"))           return (void*)&SetThreadErrorMode;
+    if (sharpos_streq(n,"SetThreadStackGuarantee"))      return (void*)&SetThreadStackGuarantee;
     if (sharpos_streq(n,"CreateEventW"))                 return (void*)&CreateEventW;
     if (sharpos_streq(n,"CreateEventA"))                 return (void*)&CreateEventA;
     if (sharpos_streq(n,"CreateSemaphoreExW"))           return (void*)&CreateSemaphoreExW;
@@ -2616,6 +2710,9 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"WaitForSingleObjectEx"))        return (void*)&WaitForSingleObjectEx;
     if (sharpos_streq(n,"WaitForMultipleObjects"))       return (void*)&WaitForMultipleObjects;
     if (sharpos_streq(n,"WaitForMultipleObjectsEx"))     return (void*)&WaitForMultipleObjectsEx;
+    if (sharpos_streq(n,"Sleep"))                        return (void*)&Sleep;
+    if (sharpos_streq(n,"SleepEx"))                      return (void*)&SleepEx;
+    if (sharpos_streq(n,"SwitchToThread"))               return (void*)&SwitchToThread;
     if (sharpos_streq(n,"InitializeCriticalSection"))    return (void*)&InitializeCriticalSection;
     if (sharpos_streq(n,"EnterCriticalSection"))         return (void*)&EnterCriticalSection;
     if (sharpos_streq(n,"LeaveCriticalSection"))         return (void*)&LeaveCriticalSection;

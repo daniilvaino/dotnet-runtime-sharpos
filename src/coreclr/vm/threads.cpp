@@ -47,6 +47,10 @@
 #include "roapi.h"
 #endif // FEATURE_COMINTEROP_APARTMENT_SUPPORT
 
+#if defined(TARGET_SHARPOS)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+#endif
+
 #ifdef FEATURE_SPECIAL_USER_MODE_APC
 #include "asmconstants.h"
 #include <versionhelpers.h>
@@ -1736,6 +1740,10 @@ BOOL Thread::HasStarted()
     }
     CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[HS] entry\n");
+#endif
+
     _ASSERTE(!m_fPreemptiveGCDisabled);     // can't use PreemptiveGCDisabled() here
 
     // This is cheating a little.  There is a pathway here from SetupThread, but only
@@ -1743,6 +1751,10 @@ BOOL Thread::HasStarted()
     // preemptive mode, ready for a transition.  But in the IJW case, it can return a
     // cooperative mode thread.  RunDllMain handles this "surprise" correctly.
     m_fPreemptiveGCDisabled = TRUE;
+
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[HS] post-preemp\n");
+#endif
 
     // Normally, HasStarted is called from the thread's entrypoint to introduce it to
     // the runtime.  But sometimes that thread is used for DLL_THREAD_ATTACH notifications
@@ -1757,20 +1769,35 @@ BOOL Thread::HasStarted()
     BOOL    fCanCleanupCOMState = FALSE;
     BOOL    res = TRUE;
 
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[HS] pre-SetStackLimits\n");
+#endif
     res = SetStackLimits(fAll);
     if (res == FALSE)
     {
         m_pExceptionDuringStartup = Exception::GetOOMException();
         goto FAILURE;
     }
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[HS] post-SetStackLimits\n");
+#endif
 
     // If any exception happens during HasStarted, we will cache the exception in Thread::m_pExceptionDuringStartup
     // which will be thrown in Thread.Start as an internal exception
     EX_TRY
     {
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[HS] pre-SetupTLS\n");
+#endif
         SetupTLSForThread();
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[HS] pre-InitThread\n");
+#endif
 
         InitThread();
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[HS] post-InitThread\n");
+#endif
 
         fCanCleanupCOMState = TRUE;
         // Preparing the COM apartment and context may attempt
@@ -1780,10 +1807,19 @@ BOOL Thread::HasStarted()
         // to the thread being set so the Preemptive mode transition
         // is a no-op.
         PrepareApartmentAndContext();
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[HS] post-PrepareApartment\n");
+#endif
 
         SetThread(this);
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[HS] post-SetThread\n");
+#endif
 
         ThreadStore::TransferStartedThread(this);
+#if defined(TARGET_SHARPOS)
+        SharpOSHost_DebugPrint("[HS] post-TransferStarted\n");
+#endif
 
 #ifdef FEATURE_EVENT_TRACE
         ETW::ThreadLog::FireThreadCreated(this);

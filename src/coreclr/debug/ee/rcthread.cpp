@@ -1346,6 +1346,16 @@ HRESULT DebuggerRCThread::Start(void)
 
     LOG((LF_CORDB, LL_EVERYTHING, "DebuggerRCThread::Start called...\n"));
 
+#ifdef TARGET_SHARPOS
+    // SharpOS has no debugger transport (no IPC pipe, no debugger client
+    // attaching to the runtime). The helper thread would loop polling
+    // an unbacked DebuggerIPCControlBlock and silently #PF inside the
+    // Win32-event wait. Skip creation entirely; managed code never
+    // depends on the helper thread for execution -- only debugger
+    // attach scenarios do.
+    return S_OK;
+#endif
+
     DWORD helperThreadId;
 
     if (m_thread != NULL)
