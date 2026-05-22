@@ -1252,49 +1252,121 @@ extern "C" void OutputDebugStringW(const wchar_t* s) {
 }
 CRT_REAL(OutputDebugStringW);
 
-// --- Sync primitives: single-thread fakes ---
+// --- Phase E9.b sync primitives: forwarded to kernel HandleTable ---
 //
-// SharpOS boot path single-threaded. CoreCLR creates events/semaphores
-// для cross-thread signaling, но fires them в нашем контексте никто не
-// блокирует. Возвращаем растущие fake handles (так что хеш-таблицы по
-// HANDLE не имеют коллизий) — SetEvent/ResetEvent/Wait* no-op.
+// Pre-E9.b: SharpOS treated all event/semaphore/mutex handles as opaque
+// fake counters and let SetEvent/ResetEvent/ReleaseSemaphore no-op while
+// WaitForSingleObject lied "signaled". That model collapses as soon as
+// cross-thread signaling actually matters (Monitor.Wait/Pulse,
+// ThreadPool worker wake-up, Task continuation chains).
+//
+// E9.b: each Create* returns a real HandleTable slot keyed to a
+// kernel-side OS.Kernel.Threading.{Event,Semaphore,Win32Mutex} object;
+// signal/release/wait route through Scheduler. ThreadStubs.cs already
+// dispatches WaitForSingleObject by type tag via HandleTable.Lookup.
+//
+// Win32 SECURITY_ATTRIBUTES / lpName / DesiredAccess / Ex-flag bits
+// outside the documented Create*Ex flags are ignored -- SharpOS has no
+// named kernel objects, ACLs, or cross-process handles.
 
-static uintptr_t g_fakeHandleCounter = 0x1000;
+extern "C" uint64_t SharpOSHost_CreateEvent(int manualReset, int initialState);
+extern "C" uint64_t SharpOSHost_CreateEventEx(uint32_t flags);
+extern "C" int      SharpOSHost_SetEvent(uint64_t handle);
+extern "C" int      SharpOSHost_ResetEvent(uint64_t handle);
+extern "C" uint64_t SharpOSHost_CreateSemaphore(int32_t initial, int32_t max);
+extern "C" int      SharpOSHost_ReleaseSemaphore(uint64_t handle, int32_t releaseCount, int32_t* outPrev);
+extern "C" uint64_t SharpOSHost_CreateMutex(int initialOwner);
+extern "C" int      SharpOSHost_ReleaseMutex(uint64_t handle);
 
-extern "C" void* CreateEventW(void* /*lpEventAttrs*/, int /*bManualReset*/, int /*bInitState*/, const wchar_t* /*lpName*/) {
+extern "C" void* CreateEventW(void* /*lpEventAttrs*/, int bManualReset, int bInitState, const wchar_t* /*lpName*/) {
     TRACE_REAL(CreateEventW);
-    g_LastError = 0;
-    return (void*)(++g_fakeHandleCounter);
+    uint64_t h = SharpOSHost_CreateEvent(bManualReset, bInitState);
+    g_LastError = h == 0 ? 8 /*ERROR_NOT_ENOUGH_MEMORY*/ : 0;
+    return (void*)(uintptr_t)h;
 }
 CRT_REAL(CreateEventW);
 
-extern "C" void* CreateEventA(void* /*lpEventAttrs*/, int /*bManualReset*/, int /*bInitState*/, const char* /*lpName*/) {
+extern "C" void* CreateEventA(void* /*lpEventAttrs*/, int bManualReset, int bInitState, const char* /*lpName*/) {
     TRACE_REAL(CreateEventA);
-    g_LastError = 0;
-    return (void*)(++g_fakeHandleCounter);
+    uint64_t h = SharpOSHost_CreateEvent(bManualReset, bInitState);
+    g_LastError = h == 0 ? 8 : 0;
+    return (void*)(uintptr_t)h;
 }
 CRT_REAL(CreateEventA);
 
-extern "C" void* CreateSemaphoreExW(void* /*lpAttrs*/, int32_t /*lInitial*/, int32_t /*lMax*/, const wchar_t* /*lpName*/, uint32_t /*flags*/, uint32_t /*access*/) {
+extern "C" void* CreateEventExW(void* /*lpEventAttrs*/, const wchar_t* /*lpName*/, uint32_t dwFlags, uint32_t /*dwDesiredAccess*/) {
+    TRACE_REAL(CreateEventExW);
+    uint64_t h = SharpOSHost_CreateEventEx(dwFlags);
+    g_LastError = h == 0 ? 8 : 0;
+    return (void*)(uintptr_t)h;
+}
+CRT_REAL(CreateEventExW);
+
+extern "C" void* CreateSemaphoreW(void* /*lpAttrs*/, int32_t lInitial, int32_t lMax, const wchar_t* /*lpName*/) {
+    TRACE_REAL(CreateSemaphoreW);
+    uint64_t h = SharpOSHost_CreateSemaphore(lInitial, lMax);
+    g_LastError = h == 0 ? 8 : 0;
+    return (void*)(uintptr_t)h;
+}
+CRT_REAL(CreateSemaphoreW);
+
+extern "C" void* CreateSemaphoreExW(void* /*lpAttrs*/, int32_t lInitial, int32_t lMax, const wchar_t* /*lpName*/, uint32_t /*flags*/, uint32_t /*access*/) {
     TRACE_REAL(CreateSemaphoreExW);
-    g_LastError = 0;
-    return (void*)(++g_fakeHandleCounter);
+    uint64_t h = SharpOSHost_CreateSemaphore(lInitial, lMax);
+    g_LastError = h == 0 ? 8 : 0;
+    return (void*)(uintptr_t)h;
 }
 CRT_REAL(CreateSemaphoreExW);
 
-extern "C" int SetEvent(void* /*h*/)   { TRACE_REAL(SetEvent);   g_LastError = 0; return 1; }
+extern "C" void* CreateMutexW(void* /*lpAttrs*/, int bInitialOwner, const wchar_t* /*lpName*/) {
+    TRACE_REAL(CreateMutexW);
+    uint64_t h = SharpOSHost_CreateMutex(bInitialOwner);
+    g_LastError = h == 0 ? 8 : 0;
+    return (void*)(uintptr_t)h;
+}
+CRT_REAL(CreateMutexW);
+
+extern "C" void* CreateMutexExW(void* /*lpAttrs*/, const wchar_t* /*lpName*/, uint32_t dwFlags, uint32_t /*dwDesiredAccess*/) {
+    TRACE_REAL(CreateMutexExW);
+    // CREATE_MUTEX_INITIAL_OWNER = 0x00000001
+    int initialOwner = (dwFlags & 0x00000001) != 0 ? 1 : 0;
+    uint64_t h = SharpOSHost_CreateMutex(initialOwner);
+    g_LastError = h == 0 ? 8 : 0;
+    return (void*)(uintptr_t)h;
+}
+CRT_REAL(CreateMutexExW);
+
+extern "C" int SetEvent(void* h) {
+    TRACE_REAL(SetEvent);
+    int ok = SharpOSHost_SetEvent((uint64_t)(uintptr_t)h);
+    g_LastError = ok ? 0 : 6 /*ERROR_INVALID_HANDLE*/;
+    return ok;
+}
 CRT_REAL(SetEvent);
 
-extern "C" int ResetEvent(void* /*h*/) { TRACE_REAL(ResetEvent); g_LastError = 0; return 1; }
+extern "C" int ResetEvent(void* h) {
+    TRACE_REAL(ResetEvent);
+    int ok = SharpOSHost_ResetEvent((uint64_t)(uintptr_t)h);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
 CRT_REAL(ResetEvent);
 
-extern "C" int ReleaseSemaphore(void* /*h*/, int32_t /*lRelease*/, int32_t* lpPrev) {
+extern "C" int ReleaseSemaphore(void* h, int32_t lRelease, int32_t* lpPrev) {
     TRACE_REAL(ReleaseSemaphore);
-    if (lpPrev) *lpPrev = 0;
-    g_LastError = 0;
-    return 1;
+    int ok = SharpOSHost_ReleaseSemaphore((uint64_t)(uintptr_t)h, lRelease, lpPrev);
+    g_LastError = ok ? 0 : 6;
+    return ok;
 }
 CRT_REAL(ReleaseSemaphore);
+
+extern "C" int ReleaseMutex(void* h) {
+    TRACE_REAL(ReleaseMutex);
+    int ok = SharpOSHost_ReleaseMutex((uint64_t)(uintptr_t)h);
+    g_LastError = ok ? 0 : 288 /*ERROR_NOT_OWNER*/;
+    return ok;
+}
+CRT_REAL(ReleaseMutex);
 
 extern "C" int CloseHandle(void* h) {
     TRACE_REAL(CloseHandle);
@@ -3408,10 +3480,15 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"SetThreadStackGuarantee"))      return (void*)&SetThreadStackGuarantee;
     if (sharpos_streq(n,"CreateEventW"))                 return (void*)&CreateEventW;
     if (sharpos_streq(n,"CreateEventA"))                 return (void*)&CreateEventA;
+    if (sharpos_streq(n,"CreateEventExW"))               return (void*)&CreateEventExW;
+    if (sharpos_streq(n,"CreateSemaphoreW"))             return (void*)&CreateSemaphoreW;
     if (sharpos_streq(n,"CreateSemaphoreExW"))           return (void*)&CreateSemaphoreExW;
+    if (sharpos_streq(n,"CreateMutexW"))                 return (void*)&CreateMutexW;
+    if (sharpos_streq(n,"CreateMutexExW"))               return (void*)&CreateMutexExW;
     if (sharpos_streq(n,"SetEvent"))                     return (void*)&SetEvent;
     if (sharpos_streq(n,"ResetEvent"))                   return (void*)&ResetEvent;
     if (sharpos_streq(n,"ReleaseSemaphore"))             return (void*)&ReleaseSemaphore;
+    if (sharpos_streq(n,"ReleaseMutex"))                 return (void*)&ReleaseMutex;
     if (sharpos_streq(n,"CloseHandle"))                  return (void*)&CloseHandle;
     if (sharpos_streq(n,"DuplicateHandle"))              return (void*)&DuplicateHandle;
     if (sharpos_streq(n,"WaitForSingleObject"))          return (void*)&WaitForSingleObject;
