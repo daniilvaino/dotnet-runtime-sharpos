@@ -25,6 +25,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// Per-thread LastError via gs:[0x68] (NT_TIB.LastErrorValue). clang-cl
+// intrinsics __readgsdword / __writegsdword are inline-expanded only
+// when <intrin.h> is included -- but that header transitively pulls
+// in <stdlib.h>/<stdio.h>, whose declarations conflict with our
+// CRT_STUB-emitted forward decls (atoi/strtod/perror/etc., signatureless
+// `extern "C" void NAME()`).
+//
+// Workaround: tiny inline GCC-style asm. clang-cl accepts __asm__
+// even in MSVC-compat mode. Offset is hardcoded 0x68 (no parameter
+// substitution needed here -- only one user).
+static inline uint32_t sharpos_gs_read_lasterr() {
+    uint32_t v;
+    __asm__ volatile ("mov %%gs:0x68, %0" : "=r"(v));
+    return v;
+}
+static inline void sharpos_gs_write_lasterr(uint32_t v) {
+    __asm__ volatile ("mov %0, %%gs:0x68" : : "r"(v) : "memory");
+}
+
 // Forwards to host-side diagnostic (defined в OS/src/PAL/SharpOSHost/
 // Diagnostics.cs). Weak fallback for coreclr.dll smoke build target.
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/) {}
@@ -777,10 +796,34 @@ CRT_REAL(GetCurrentProcessId);
 extern "C" uint32_t GetCurrentThreadId(void)  { TRACE_REAL(GetCurrentThreadId);  return SharpOSHost_GetCurrentThreadId(); }
 CRT_REAL(GetCurrentThreadId);
 
-static uint32_t g_LastError = 0;
-extern "C" uint32_t GetLastError(void)  { /* TRACE_REAL too noisy */ return g_LastError; }
+// Phase E9.b step 102 -- per-thread LastError via TEB+0x68
+// (NT_TIB.LastErrorValue, sage-2 add per docs/threading-architecture.md
+// §12). Pre-E9.b LastError was a single global -- on multi-thread
+// CoreCLR (E9.a+) two threads racing through PAL calls could clobber
+// each other's error. NT_TIB at offset 0x68 is the canonical Win32
+// per-thread last-error slot; BCL P/Invoke marshalers and the CRT
+// already assume this layout.
+//
+// All 144 g_LastError write-sites elsewhere in this file go through
+// this proxy struct's operator= so the textual signature stays the
+// same (literally `g_LastError = X`). Read-sites likewise unchanged.
+//
+// gs base is set up by CoreClrProbe.SetupTebFacade (boot thread) and
+// CoreClrTeb.Allocate (per-hosted-thread) BEFORE any CRT call enters
+// from CoreCLR, so the gs:[0x68] access is safe at all of them.
+// Initial value is 0 -- GcHeap.AllocateRaw zeroes the TEB box.
+struct LastErrorRef {
+    operator uint32_t() const { return sharpos_gs_read_lasterr(); }
+    LastErrorRef& operator=(uint32_t v) {
+        sharpos_gs_write_lasterr(v);
+        return *this;
+    }
+};
+static LastErrorRef g_LastError;
+
+extern "C" uint32_t GetLastError(void)  { /* TRACE_REAL too noisy */ return sharpos_gs_read_lasterr(); }
 CRT_REAL(GetLastError);
-extern "C" void SetLastError(uint32_t e) { g_LastError = e; }
+extern "C" void SetLastError(uint32_t e) { sharpos_gs_write_lasterr(e); }
 CRT_REAL(SetLastError);
 
 extern "C" int IsDebuggerPresent(void) { TRACE_REAL(IsDebuggerPresent); return 0; }
