@@ -1368,6 +1368,39 @@ extern "C" int ReleaseMutex(void* h) {
 }
 CRT_REAL(ReleaseMutex);
 
+// --- Phase E9.c: WaitOnAddress / WakeByAddressSingle / WakeByAddressAll ---
+//
+// Modern .NET (4.6+) fast-path sync primitives -- ManualResetEventSlim,
+// SemaphoreSlim, SpinWait, the low-level lock inside Monitor's syncblock
+// fast path, ConcurrentDictionary slow path -- all spin briefly then
+// fall back to WaitOnAddress instead of grabbing a kernel Event. Pre-
+// E9.c the PAL had no stub (CRT trap on any call); now forwards to
+// kernel-side OS.Kernel.Threading.AddressWait (bucketed wait queue
+// keyed by user-memory address).
+extern "C" int  SharpOSHost_WaitOnAddress(const void* addr, const void* cmpAddr, uint32_t addressSize, uint32_t timeoutMs);
+extern "C" void SharpOSHost_WakeByAddressSingle(const void* addr);
+extern "C" void SharpOSHost_WakeByAddressAll(const void* addr);
+
+extern "C" int WaitOnAddress(volatile void* addr, void* cmpAddr, size_t addressSize, uint32_t timeoutMs) {
+    TRACE_REAL(WaitOnAddress);
+    int signaled = SharpOSHost_WaitOnAddress((const void*)addr, cmpAddr, (uint32_t)addressSize, timeoutMs);
+    g_LastError = signaled ? 0 : 1460 /*ERROR_TIMEOUT*/;
+    return signaled;
+}
+CRT_REAL(WaitOnAddress);
+
+extern "C" void WakeByAddressSingle(void* addr) {
+    TRACE_REAL(WakeByAddressSingle);
+    SharpOSHost_WakeByAddressSingle(addr);
+}
+CRT_REAL(WakeByAddressSingle);
+
+extern "C" void WakeByAddressAll(void* addr) {
+    TRACE_REAL(WakeByAddressAll);
+    SharpOSHost_WakeByAddressAll(addr);
+}
+CRT_REAL(WakeByAddressAll);
+
 extern "C" int CloseHandle(void* h) {
     TRACE_REAL(CloseHandle);
     g_LastError = 0;
@@ -3489,6 +3522,9 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"ResetEvent"))                   return (void*)&ResetEvent;
     if (sharpos_streq(n,"ReleaseSemaphore"))             return (void*)&ReleaseSemaphore;
     if (sharpos_streq(n,"ReleaseMutex"))                 return (void*)&ReleaseMutex;
+    if (sharpos_streq(n,"WaitOnAddress"))                return (void*)&WaitOnAddress;
+    if (sharpos_streq(n,"WakeByAddressSingle"))          return (void*)&WakeByAddressSingle;
+    if (sharpos_streq(n,"WakeByAddressAll"))             return (void*)&WakeByAddressAll;
     if (sharpos_streq(n,"CloseHandle"))                  return (void*)&CloseHandle;
     if (sharpos_streq(n,"DuplicateHandle"))              return (void*)&DuplicateHandle;
     if (sharpos_streq(n,"WaitForSingleObject"))          return (void*)&WaitForSingleObject;
