@@ -155,6 +155,15 @@ if(CLR_CMAKE_HOST_UNIX AND NOT CLR_CMAKE_TARGET_SHARPOS)
     )
 endif()
 
+if(CLR_CMAKE_TARGET_SHARPOS)
+    # SharpOS port: mscorrc is built as an OBJECT lib (compiled-in
+    # native string table, same as Unix path) — no PE-resource DLL.
+    # See dlls/mscorrc/CMakeLists.txt and docs/eh-model.md.
+    list(APPEND CORECLR_LIBRARIES
+        mscorrc
+    )
+endif()
+
 if(CLR_CMAKE_TARGET_LINUX)
     list(APPEND CORECLR_LIBRARIES
         ${START_WHOLE_ARCHIVE}

@@ -558,6 +558,13 @@ static void DispatchLongJmp(IN     PEXCEPTION_RECORD   pExceptionRecord,
 }
 #endif
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// Forward decl for step103 PCRE diag below. extern "C" must be at file
+// scope (memory: extern_c_only_file_scope). DebugWrite is NOT
+// Verbose-gated so the diagnostic prints under default-quiet config.
+extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
+#endif
+
 EXTERN_C EXCEPTION_DISPOSITION __cdecl
 ProcessCLRException(IN     PEXCEPTION_RECORD   pExceptionRecord,
                     IN     PVOID               pEstablisherFrame,

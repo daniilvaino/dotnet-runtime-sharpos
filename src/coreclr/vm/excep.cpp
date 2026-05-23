@@ -28,6 +28,7 @@
 #include "dwreport.h"
 #endif // !TARGET_UNIX
 
+
 #include "eventreporter.h"
 
 #ifdef FEATURE_COMINTEROP
@@ -5580,6 +5581,38 @@ CreateCOMPlusExceptionObject(Thread *pThread, EXCEPTION_RECORD *pExceptionRecord
     DWORD exceptionCode = pExceptionRecord->ExceptionCode;
 
     OBJECTREF result = 0;
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // PAL_TRY/PAL_CATCH on TARGET_UNIX wraps msc C++ throws (code
+    // 0xE06D7363) as native SEHException, losing the original
+    // CLRException-derived type. Recover it from the throw record.
+    //
+    // MSVC msc ABI: ExceptionInformation[1] is `void**` — the address
+    // of a slot holding the thrown pointer. For
+    //   throw new EEMessageException(...);
+    // einfo[1] holds the address of the temporary that stores the
+    // EEMessageException pointer, NOT the object itself. We need one
+    // extra dereference to reach the real Exception object.
+    if (!bAsynchronousThreadStop
+        && exceptionCode == 0xE06D7363
+        && pExceptionRecord->NumberParameters >= 4)
+    {
+        ULONG_PTR magic = pExceptionRecord->ExceptionInformation[0];
+        void** ppCppObj = (void**)pExceptionRecord->ExceptionInformation[1];
+        if ((magic == 0x19930520 || magic == 0x19930521 || magic == 0x19930522)
+            && ppCppObj != nullptr)
+        {
+            Exception* pE = (Exception*)*ppCppObj;
+            if (pE != nullptr)
+            {
+                if (pE->IsType(CLRException::GetType()))
+                    return ((CLRException*)pE)->GetThrowable();
+                if (pE->IsType(EEException::GetType()))
+                    return ((EEException*)pE)->GetThrowable();
+            }
+        }
+    }
+#endif
 
     DWORD COMPlusExceptionCode = (bAsynchronousThreadStop
                                     ? kThreadAbortException

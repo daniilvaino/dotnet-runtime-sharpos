@@ -5,6 +5,26 @@
 #include "executableallocator.h"
 #include <configuration.h>
 
+#if defined(TARGET_SHARPOS)
+// Phase E10 Path B: register every executable VA reserve with the
+// kernel SEH walker as a stub heap (leaf-unwind range). Mirrors the
+// Windows CoreCLR design where RtlInstallFunctionTableCallback covers
+// stub heaps so the OS unwinder can step past leaf-style thunks
+// (call helper; ret) into the calling JIT method. Without this,
+// exceptions thrown from a runtime helper called by a precode / call-
+// counting / VSD / dynamic-helper stub cannot unwind past the stub
+// (no .pdata for the thunk), and the search-pass walker bails out.
+//
+// Weak no-op here lets the standalone coreclr.dll link (which doesn't
+// pull in coreclrpal_kernel_crt.lib). The final kernel image link
+// (with /FORCE:MULTIPLE + OS.obj first) picks the real definition
+// from crt_imp_stubs.cpp, which forwards to the kernel C#
+// SharpOSHost_RegisterStubRange in SehUnwind.cs.
+#include <stdint.h>
+extern "C" __attribute__((weak)) void SharpOSRegisterStubHeap(
+    void* /*start*/, uint64_t /*length*/) {}
+#endif
+
 #if USE_LAZY_PREFERRED_RANGE
 // Preferred region to allocate the code in.
 BYTE * ExecutableAllocator::g_lazyPreferredRangeStart;
@@ -719,7 +739,17 @@ void* ExecutableAllocator::ReserveWithinRange(size_t size, const void* loAddress
         // and thus improve performance by avoiding jump stubs in managed code.
         allocationType |= MEM_RESERVE_EXECUTABLE;
 #endif
-        return ClrVirtualAllocWithinRange((const BYTE*)loAddress, (const BYTE*)hiAddress, size, allocationType, PAGE_NOACCESS);
+        void* result = ClrVirtualAllocWithinRange((const BYTE*)loAddress, (const BYTE*)hiAddress, size, allocationType, PAGE_NOACCESS);
+#if defined(TARGET_SHARPOS)
+        // Phase E10 Path B: ReserveWithinRange is called directly by
+        // codeman.cpp (jump stubs) and dynamicmethod.cpp (dynamic methods)
+        // — bypasses our Reserve() hook. Register here too.
+        if (result != NULL)
+        {
+            SharpOSRegisterStubHeap(result, (uint64_t)size);
+        }
+#endif
+        return result;
     }
 }
 
@@ -813,6 +843,21 @@ void* ExecutableAllocator::Reserve(size_t size)
         }
     }
 
+#if defined(TARGET_SHARPOS)
+    // Single-point registration: any successful executable reserve is
+    // recorded as a stub heap. The SEH walker's LookupFunctionEntry
+    // tries DynamicLookup (JIT code-heap callback) and StaticTableLookup
+    // (R2R .pdata) first; only when both miss does StubRangeLookup
+    // synthesize the leaf RUNTIME_FUNCTION for these ranges. So JIT
+    // methods with proper unwind info continue to use it; only stub
+    // thunks (which never call InstallEEFunctionTable) get leaf
+    // treatment. See SehUnwind.cs StubRangeLookup / s_stubs.
+    if (result != NULL)
+    {
+        SharpOSRegisterStubHeap(result, (uint64_t)size);
+    }
+#endif
+
     return result;
 }
 
@@ -855,7 +900,15 @@ void* ExecutableAllocator::ReserveAt(void* baseAddressRX, size_t size)
     }
     else
     {
-        return VirtualAlloc(baseAddressRX, size, MEM_RESERVE, PAGE_NOACCESS);
+        void* result = VirtualAlloc(baseAddressRX, size, MEM_RESERVE, PAGE_NOACCESS);
+#if defined(TARGET_SHARPOS)
+        // Phase E10 Path B: pinned-address reserve (rare) — register too.
+        if (result != NULL)
+        {
+            SharpOSRegisterStubHeap(result, (uint64_t)size);
+        }
+#endif
+        return result;
     }
 }
 
@@ -1012,12 +1065,32 @@ void* ExecutableAllocator::AllocateThunksFromTemplate(void *pTemplate, size_t te
         {
             ReleaseWorker(block->baseRX, false);
         }
+#if defined(TARGET_SHARPOS)
+        else
+        {
+            // Double-mapped template path: same template-stub layout
+            // (RX + RW interleaved), templateSize*2 footprint.
+            SharpOSRegisterStubHeap(pTemplateAddressAllocated, (uint64_t)templateSize * 2);
+        }
+#endif
 
         return pTemplateAddressAllocated;
     }
     else
     {
-        return VMToOSInterface::AllocateThunksFromTemplate(pTemplate, templateSize, NULL, dataPageGenerator);
+        void* result = VMToOSInterface::AllocateThunksFromTemplate(pTemplate, templateSize, NULL, dataPageGenerator);
+#if defined(TARGET_SHARPOS)
+        // Phase E10 Path B: template-style stub allocations bypass Reserve()
+        // — InterleavedLoaderHeap uses this path for FixupPrecode /
+        // StubPrecode / DynamicHelpers stubs. The interleaved layout
+        // reserves templateSize*2 (RX code page + RW data page), so the
+        // executable footprint spans that whole region.
+        if (result != NULL)
+        {
+            SharpOSRegisterStubHeap(result, (uint64_t)templateSize * 2);
+        }
+#endif
+        return result;
     }
 }
 

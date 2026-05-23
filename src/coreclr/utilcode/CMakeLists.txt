@@ -97,15 +97,35 @@ add_library_clr(utilcodestaticnohost STATIC ${UTILCODE_STATICNOHOST_SOURCES})
 
 target_link_libraries(utilcodestaticnohost PUBLIC coreclrminipal)
 
-if(CLR_CMAKE_HOST_UNIX)
+if(CLR_CMAKE_HOST_UNIX OR CLR_CMAKE_TARGET_SHARPOS)
+  # SharpOS port: also link the compiled-in native string table so
+  # CCompRC::LoadString resolves resource IDs via in-process bsearch
+  # (no mscorrc.dll runtime lookup). See coreclr/CMakeLists.txt.
   target_link_libraries(utilcodestaticnohost PUBLIC nativeresourcestring)
   if (NOT CLR_CMAKE_TARGET_ARCH_WASM)
     target_link_libraries(utilcode_dac PUBLIC nativeresourcestring)
-    add_dependencies(utilcode_dac coreclrpal)
+    if(CLR_CMAKE_HOST_UNIX)
+      add_dependencies(utilcode_dac coreclrpal)
+    endif()
   endif()
   target_link_libraries(utilcode INTERFACE nativeresourcestring)
-  add_dependencies(utilcode coreclrpal)
-endif(CLR_CMAKE_HOST_UNIX)
+  if(CLR_CMAKE_HOST_UNIX)
+    add_dependencies(utilcode coreclrpal)
+  endif()
+endif()
+
+if(CLR_CMAKE_TARGET_SHARPOS)
+  # SharpOS port: ccomprc.cpp now references nativeStringResourceTable_mscorrc
+  # (Unix-style path). Make mscorrc OBJECT lib a PUBLIC dep so every consumer
+  # of utilcodestaticnohost / utilcode_dac (coreclr, mscordbi, mscordac,
+  # coreshim, ilasm, ildasm, jit) automatically pulls the symbol — no per-
+  # consumer link edit. See docs/eh-model.md "GetThrowableMessage".
+  target_link_libraries(utilcodestaticnohost PUBLIC mscorrc)
+  if (NOT CLR_CMAKE_TARGET_ARCH_WASM)
+    target_link_libraries(utilcode_dac PUBLIC mscorrc)
+  endif()
+  target_link_libraries(utilcode INTERFACE mscorrc)
+endif()
 
 
 if(CLR_CMAKE_HOST_WIN32)

@@ -616,6 +616,33 @@ OBJECTREF CLRException::GetThrowableFromException(Exception *pException)
     {
         SEHException *pSEHException = (SEHException*)pException;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // PAL_TRY/PAL_CATCH on TARGET_UNIX wraps msc C++ throws (code
+        // 0xE06D7363) as SEHException. Recover the original
+        // CLRException-derived throwable via the msc throw record.
+        // ExceptionInformation[1] is `void**` (address of the stored
+        // pointer) for `throw exprPointer`, so one extra dereference
+        // is required to reach the real C++ Exception object.
+        if (pSEHException->m_exception.ExceptionCode == 0xE06D7363
+            && pSEHException->m_exception.NumberParameters >= 4)
+        {
+            ULONG_PTR magic = pSEHException->m_exception.ExceptionInformation[0];
+            void** ppCppObj = (void**)pSEHException->m_exception.ExceptionInformation[1];
+            if ((magic == 0x19930520 || magic == 0x19930521 || magic == 0x19930522)
+                && ppCppObj != nullptr)
+            {
+                Exception* pE = (Exception*)*ppCppObj;
+                if (pE != nullptr)
+                {
+                    if (pE->IsType(CLRException::GetType()))
+                        return ((CLRException*)pE)->GetThrowable();
+                    if (pE->IsType(EEException::GetType()))
+                        return ((EEException*)pE)->GetThrowable();
+                }
+            }
+        }
+#endif
+
         switch (pSEHException->m_exception.ExceptionCode)
         {
         case EXCEPTION_COMPLUS:

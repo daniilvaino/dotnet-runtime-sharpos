@@ -21,6 +21,8 @@
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
 extern "C" void SharpOSHost_DebugPrint(const char*);
 extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+extern "C" uint8_t* g_gc_lowest_address;
+extern "C" uint8_t* g_gc_highest_address;
 
 // Print a managed String object as ASCII (layout: +0x08 length int,
 // +0x0C UTF-16 chars). Guarded; we run inside AVInRuntimeImplOkayHolder.
@@ -538,6 +540,26 @@ VOID Object::Validate(BOOL bDeep, BOOL bVerifyNextHeader, BOOL bVerifySyncBlock)
     STATIC_CONTRACT_FORBID_FAULT;
     STATIC_CONTRACT_MODE_COOPERATIVE;
     STATIC_CONTRACT_CANNOT_TAKE_LOCK;
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // step107: skip Object::Validate when `this` is outside CoreCLR's
+    // managed heap range. Debug-only GC walks (debug Object::Validate
+    // sanity assertion) trip MT::SanityCheck when reported register
+    // slots contain non-OBJECTREF values (kernel-heap pointers etc.).
+    // Upstream PR #119446 fixes the root by enabling conservative GC
+    // when interpreter is enabled — too disruptive to cherry-pick (heavy
+    // restructure of interpreter slot allocation that conflicts with
+    // our base). This workaround is equivalent for the debug-assert
+    // path: real managed objects always live in [g_gc_lowest_address..
+    // g_gc_highest_address) and still get validated correctly.
+    {
+        uintptr_t va = (uintptr_t)this;
+        uintptr_t lo = (uintptr_t)g_gc_lowest_address;
+        uintptr_t hi = (uintptr_t)g_gc_highest_address;
+        if (lo != 0 && hi != 0 && (va < lo || va >= hi))
+            return;
+    }
+#endif
 
     if (g_fEEShutDown & ShutDown_Phase2)
     {

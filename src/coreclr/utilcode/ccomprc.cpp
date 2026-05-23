@@ -6,10 +6,14 @@
 #include <corerror.h>
 
 #include "../dlls/mscorrc/resource.h"
-#ifdef HOST_UNIX
+#if defined(HOST_UNIX) || defined(TARGET_SHARPOS)
 #include "resourcestring.h"
 #define NATIVE_STRING_RESOURCE_NAME mscorrc
+#ifdef _MSC_VER
+DECLARE_NATIVE_STRING_RESOURCE_TABLE(NATIVE_STRING_RESOURCE_NAME);
+#else
 __attribute__((visibility("default"))) DECLARE_NATIVE_STRING_RESOURCE_TABLE(NATIVE_STRING_RESOURCE_NAME);
+#endif
 #endif
 #include "sstring.h"
 #include "stringarraylist.h"
@@ -294,8 +298,12 @@ CCompRC* CCompRC::GetDefaultResourceDll()
 //*****************************************************************************
 //*****************************************************************************
 
-// String resources packaged as PE files only exist on Windows
-#ifdef HOST_WINDOWS
+// String resources packaged as PE files only exist on Windows.
+// Under TARGET_SHARPOS the table is compiled into the kernel image
+// (see coreclr/CMakeLists.txt Native string resource pipeline), so the
+// PE-resource lookup path is excluded entirely — keeps WszLoadLibrary
+// / FindResource / etc. out of the SharpOS build.
+#if defined(HOST_WINDOWS) && !defined(TARGET_SHARPOS)
 HRESULT CCompRC::GetLibrary(LocaleID langId, HRESOURCEDLL* phInst)
 {
     CONTRACTL
@@ -500,7 +508,7 @@ HRESULT CCompRC::LoadString(ResourceCategory eCategory, LocaleID langId, UINT iR
     }
     CONTRACTL_END;
 
-#ifdef HOST_WINDOWS
+#if defined(HOST_WINDOWS) && !defined(TARGET_SHARPOS)
     HRESULT         hr;
     HRESOURCEDLL    hInst = 0; //instance of cultured resource dll
     int length;
@@ -532,17 +540,25 @@ HRESULT CCompRC::LoadString(ResourceCategory eCategory, LocaleID langId, UINT iR
         *szBuffer = W('\0');
 
     return hr;
-#else // HOST_WINDOWS
+#else // HOST_WINDOWS && !TARGET_SHARPOS
+    // SharpOS port: same as Unix — table compiled into kernel image,
+    // missing IDs fall back to "Undefined resource string ID:0x..." (no
+    // PE-resource DLL lookup, no LoadResource cascade).
+    //
+    // resourcestring.h declares the buffer as char16_t* (Unix WCHAR),
+    // but our LPWSTR is wchar_t* (HOST_WINDOWS). Both are 16-bit on
+    // this platform so reinterpret_cast is safe.
     return LoadNativeStringResource(NATIVE_STRING_RESOURCE_TABLE(NATIVE_STRING_RESOURCE_NAME), iResourceID,
-      szBuffer, iMax, pcwchUsed);
-#endif // HOST_WINDOWS
+      reinterpret_cast<char16_t*>(szBuffer), iMax, pcwchUsed);
+#endif // HOST_WINDOWS && !TARGET_SHARPOS
 #endif
 }
 
 #ifndef DACCESS_COMPILE
 
-// String resources packaged as PE files only exist on Windows
-#ifdef HOST_WINDOWS
+// String resources packaged as PE files only exist on Windows.
+// Excluded under TARGET_SHARPOS — see comment above GetLibrary.
+#if defined(HOST_WINDOWS) && !defined(TARGET_SHARPOS)
 HRESULT CCompRC::LoadResourceFile(HRESOURCEDLL * pHInst, LPCWSTR lpFileName)
 {
     DWORD dwLoadLibraryFlags;

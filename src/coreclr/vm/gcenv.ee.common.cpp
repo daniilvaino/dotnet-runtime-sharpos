@@ -184,6 +184,7 @@ void GcEnumObject(LPVOID pData, OBJECTREF *pObj, uint32_t flags)
     Object ** ppObj = (Object **)pObj;
     GCCONTEXT   * pCtx  = (GCCONTEXT *) pData;
 
+
     if (g_pConfig->GetCheckDoubleReporting())
     {
         CheckDoubleReporting(pCtx, ppObj, flags);

@@ -49,6 +49,7 @@ static inline void sharpos_gs_write_lasterr(uint32_t v) {
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_Panic(const char* /*msg*/) {}
+extern "C" __attribute__((weak)) void SharpOSHost_DebugWrite(const void* /*buf*/, int32_t /*len*/) {}
 
 // Forwards к host-side heap (defined в CrtHeapStubs.cs). Used by HeapAlloc
 // и HeapFree real impls below. Weak fallback для coreclr.dll smoke target.
@@ -138,7 +139,7 @@ CRT_STUB(_wfopen)
 // atan atan2 atan2f atanf atanh atanhf — libm below
 CRT_STUB(atoi)
 CRT_STUB(atol)
-CRT_STUB(bsearch)
+// bsearch — real impl below (used by LoadNativeStringResource)
 // cbrt cbrtf ceil ceilf cos cosf cosh coshf exp expf — libm below
 CRT_STUB(fclose)
 // fflush — real impl below (no-op)
@@ -228,7 +229,9 @@ CRT_STUB(FlushFileBuffers)
 // background managed threads on bring-up; SMP would need an IPI barrier).
 // NtQuerySystemInformation — real impl below (ntdll P/Invoke from
 // DateTime leap-second check via reflection-mode System.Text.Json).
-CRT_STUB(FormatMessageW)
+// FormatMessageW — real impl below (used by SString::FormatMessage +
+// EEException::GetResourceMessage to substitute %1..%9 args into
+// mscorrc templates). Step103d.
 // FreeEnvironmentStringsW — real impl below
 // FreeLibrary — real impl below (no-op; we don't load DLLs)
 // GetCPInfo / GetCommandLineW / GetConsoleOutputCP — real impls below
@@ -272,7 +275,7 @@ CRT_STUB(K32GetProcessMemoryInfo)
 // LeaveCriticalSection — real impl below
 // LoadLibraryExW — real impl below (returns NULL + ERROR_MOD_NOT_FOUND)
 CRT_STUB(LoadStringW)
-CRT_STUB(LocalFree)
+// LocalFree — real impl below (forwards to SharpOSHost_HeapFree, paired with LocalAlloc)
 CRT_STUB(LookupPrivilegeValueW)
 // MapViewOfFile — real impl below (returns the file's in-memory buffer)
 // MapViewOfFileEx — real impl below (ignores base hint, returns buf+offset)
@@ -618,6 +621,26 @@ extern "C" int wcscpy_s(wchar_t* dst, size_t dstSize, const wchar_t* src) {
 }
 CRT_REAL(wcscpy_s);
 
+// Step103d: portable binary search. Used by LoadNativeStringResource
+// (nativeresources/resourcestring.cpp) to look up resource IDs in the
+// compiled-in mscorrc table. No state, no allocations.
+extern "C" void* bsearch(const void* key, const void* base, size_t nmemb,
+                         size_t size, int (*compar)(const void*, const void*)) {
+    if (!key || !base || !compar || nmemb == 0 || size == 0) return nullptr;
+    const unsigned char* base_ptr = (const unsigned char*)base;
+    size_t lo = 0, hi = nmemb;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        const void* p = base_ptr + mid * size;
+        int cmp = compar(key, p);
+        if (cmp == 0) return (void*)p;
+        if (cmp < 0) hi = mid;
+        else lo = mid + 1;
+    }
+    return nullptr;
+}
+CRT_REAL(bsearch);
+
 extern "C" int wcsncpy_s(wchar_t* dst, size_t dstSize, const wchar_t* src, size_t n) {
     if (!dst || dstSize == 0) return 22;
     if (!src) { dst[0] = 0; return 22; }
@@ -829,6 +852,32 @@ CRT_REAL(SetLastError);
 extern "C" int IsDebuggerPresent(void) { TRACE_REAL(IsDebuggerPresent); return 0; }
 CRT_REAL(IsDebuggerPresent);
 
+// QueryUnbiasedInterruptTime — Win32 monotonic counter (100-ns ticks).
+// "Unbiased" = excludes sleep time. ThreadPool.Timer uses this for
+// wait deadlines. Each call advances by 1 ms equivalent so the runtime
+// sees monotone progress. Placed after g_LastError decl (line ~835).
+extern "C" int QueryUnbiasedInterruptTime(uint64_t* out) {
+    if (out) {
+        static uint64_t t = 0;
+        *out = (++t) * 10000;
+    }
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(QueryUnbiasedInterruptTime);
+
+// GetCurrentProcessorNumberEx — fills PROCESSOR_NUMBER struct (Group:USHORT,
+// Number:UCHAR, Reserved:UCHAR). Single-CPU kernel → group 0, number 0.
+extern "C" void GetCurrentProcessorNumberEx(void* procNum) {
+    if (procNum) {
+        uint8_t* p = (uint8_t*)procNum;
+        p[0] = 0; p[1] = 0;  // Group = 0
+        p[2] = 0;            // Number = 0
+        p[3] = 0;            // Reserved
+    }
+}
+CRT_REAL(GetCurrentProcessorNumberEx);
+
 // --- Diagnostic surface helpers ---
 
 static void diag_print_ascii_w(const wchar_t* s) {
@@ -937,42 +986,122 @@ static void diag_format(const char* fmt, void* va) {
 // --- stdio_common_v* family ---
 //
 // CoreCLR (Debug build) routes printf/sprintf/fprintf through these UCRT
-// internals. We don't have a real format engine but the FORMAT STRING
-// alone is usually descriptive enough ("Module %s loaded from %s\n") —
-// surface it on console. Buffer-filling variants ALSO clear the caller's
-// buffer (NULL terminate at index 0) so downstream code sees empty
-// string, not garbage.
+// internals. We share the `diag_format` format vocabulary (see above)
+// but write to the caller's buffer. Without a real impl here the CRT
+// "Undefined resource string ID:0x?" cascade hides every diagnostic
+// string CoreCLR tries to emit — see docs/pal-minimal-audit.md.
+//
+// Supports: %d %i %u %x %X %p %s %S %c %% + l/ll/I64/z/t/j length
+//           prefixes; skips numeric width/precision (cosmetic). Stays
+//           within bufCount; always NUL-terminates; returns chars
+//           written (NOT including NUL). Caller passes va_list as
+//           `void*` pointing at the first 8-byte stack slot (x64
+//           Windows convention; matches CoreCLR call sites).
+static int vsnprintf_impl(char* buffer, size_t bufCount, const char* fmt, void* va) {
+    if (!buffer || bufCount == 0) return 0;
+    if (!fmt) { buffer[0] = 0; return 0; }
+    uintptr_t* args = (uintptr_t*)va;
+    size_t w = 0;
+    auto put_ch = [&](char c) {
+        if (w + 1 < bufCount) buffer[w++] = c;
+    };
+    auto put_str = [&](const char* s) {
+        if (!s) { for (const char* k = "(null)"; *k; ++k) put_ch(*k); return; }
+        for (; *s; ++s) put_ch(*s);
+    };
+    auto put_wstr_ascii = [&](const wchar_t* s) {
+        if (!s) { for (const char* k = "(null)"; *k; ++k) put_ch(*k); return; }
+        for (; *s; ++s) {
+            wchar_t wc = *s;
+            if ((wc >= 0x20 && wc < 0x7F) || wc == '\n' || wc == '\t' || wc == '\r')
+                put_ch((char)wc);
+            else
+                put_ch('?');
+        }
+    };
+    auto put_dec = [&](int64_t v, bool sgn) {
+        if (sgn && v < 0) { put_ch('-'); v = -v; }
+        uint64_t u = (uint64_t)v;
+        char d[24]; int n = 0;
+        if (u == 0) d[n++] = '0';
+        else while (u && n < 24) { d[n++] = (char)('0' + (u % 10)); u /= 10; }
+        while (n > 0) put_ch(d[--n]);
+    };
+    auto put_hex = [&](uint64_t v, bool upper) {
+        char d[18]; int n = 0;
+        if (v == 0) d[n++] = '0';
+        else while (v && n < 18) {
+            int nib = (int)(v & 0xF);
+            d[n++] = (char)(nib < 10 ? '0' + nib : (upper ? 'A' : 'a') + nib - 10);
+            v >>= 4;
+        }
+        while (n > 0) put_ch(d[--n]);
+    };
+    while (*fmt) {
+        if (*fmt != '%') { put_ch(*fmt++); continue; }
+        fmt++;
+        while (*fmt == '-' || *fmt == '+' || *fmt == ' ' || *fmt == '#' ||
+               *fmt == '0' || *fmt == '.' || (*fmt >= '1' && *fmt <= '9'))
+            fmt++;
+        bool isLongLong = false;
+        if (*fmt == 'l' && fmt[1] == 'l') { isLongLong = true; fmt += 2; }
+        else if (*fmt == 'l') { fmt++; }
+        else if (*fmt == 'I' && fmt[1] == '6' && fmt[2] == '4') { isLongLong = true; fmt += 3; }
+        else if (*fmt == 'z' || *fmt == 't' || *fmt == 'j') { isLongLong = true; fmt++; }
+        char c = *fmt++;
+        if (c == 0) break;
+        switch (c) {
+            case '%': put_ch('%'); break;
+            case 'd': case 'i': {
+                int64_t v = isLongLong ? (int64_t)*args : (int64_t)(int32_t)(uintptr_t)*args;
+                ++args; put_dec(v, true); break;
+            }
+            case 'u': {
+                uint64_t v = isLongLong ? (uint64_t)*args : (uint64_t)(uint32_t)(uintptr_t)*args;
+                ++args; put_dec((int64_t)v, false); break;
+            }
+            case 'x': case 'X': case 'p': {
+                uint64_t v = (c == 'p' || isLongLong) ? (uint64_t)*args
+                                                     : (uint64_t)(uint32_t)(uintptr_t)*args;
+                ++args;
+                if (c == 'p') { put_ch('0'); put_ch('x'); put_hex(v, true); }
+                else          { put_hex(v, c == 'X'); }
+                break;
+            }
+            case 's': { const char* s = (const char*)*args++; put_str(s); break; }
+            case 'S': case 'w': { const wchar_t* s = (const wchar_t*)*args++; put_wstr_ascii(s); break; }
+            case 'c': { put_ch((char)(uintptr_t)*args++); break; }
+            default:
+                ++args;
+                put_ch('%'); put_ch(c);
+                break;
+        }
+    }
+    buffer[w] = 0;
+    return (int)w;
+}
 
 extern "C" int __stdio_common_vsprintf(uint64_t /*options*/, char* buffer, size_t bufCount, const char* format, void* /*locale*/, void* args) {
-    (void)format; (void)args;   // logging suppressed — too noisy
-    if (buffer && bufCount > 0) buffer[0] = 0;
-    return 0;
+    return vsnprintf_impl(buffer, bufCount, format, args);
 }
 CRT_REAL(__stdio_common_vsprintf);
 
-// JIT pre-import code does `assert(charsPrinted > 0)` after its
-// diagnostic-format calls — must return positive. Кладём '?'+NUL и возвращаем 1.
-// Логирование подавлено (раньше печатали format string как [sprintf_s] ... —
-// слишком шумно, мозолит глаза в каждом prestub'е).
 extern "C" int __stdio_common_vsprintf_s(uint64_t /*options*/, char* buffer, size_t bufCount, const char* format, void* /*locale*/, void* args) {
-    (void)format; (void)args;   // logging suppressed — too noisy
-    if (buffer && bufCount >= 2) { buffer[0] = '?'; buffer[1] = 0; return 1; }
-    if (buffer && bufCount > 0) buffer[0] = 0;
-    return 0;
+    return vsnprintf_impl(buffer, bufCount, format, args);
 }
 CRT_REAL(__stdio_common_vsprintf_s);
 
 extern "C" int __stdio_common_vsnprintf_s(uint64_t /*options*/, char* buffer, size_t bufCount, size_t /*maxCount*/, const char* format, void* /*locale*/, void* args) {
-    (void)format; (void)args;   // logging suppressed — too noisy
-    if (buffer && bufCount >= 2) { buffer[0] = '?'; buffer[1] = 0; return 1; }
-    if (buffer && bufCount > 0) buffer[0] = 0;
-    return 0;
+    return vsnprintf_impl(buffer, bufCount, format, args);
 }
 CRT_REAL(__stdio_common_vsnprintf_s);
 
 extern "C" int __stdio_common_vfprintf(uint64_t /*options*/, void* /*stream*/, const char* format, void* /*locale*/, void* args) {
-    (void)format; (void)args;   // logging suppressed — too noisy
-    return 0;
+    // stream-printf: format to a stack buffer, surface to console.
+    char tmp[1024];
+    int n = vsnprintf_impl(tmp, sizeof(tmp), format, args);
+    if (n > 0) SharpOSHost_DebugWrite(tmp, n);
+    return n;
 }
 CRT_REAL(__stdio_common_vfprintf);
 
@@ -1142,18 +1271,38 @@ extern "C" void _invalid_parameter_noinfo(void) {
 CRT_REAL(_invalid_parameter_noinfo);
 
 extern "C" int TerminateProcess(void* /*hProcess*/, uint32_t exitCode) {
-    SharpOSHost_DebugPrint("[TerminateProcess code=0x");
-    SharpOSHost_DebugPrintHex(exitCode);
+    uint64_t callerVA = (uint64_t)__builtin_return_address(0);
+    // Route via DebugWrite (NOT Verbose-gated, unlike DebugPrint) so
+    // the caller VA is always visible — TerminateProcess(0x80131506)
+    // halts so we only get one shot at logging it.
+    {
+        SharpOSHost_DebugWrite((const void*)"[TerminateProcess code=0x", 25);
+        char buf[20]; int n = 0;
+        for (int sh = 28; sh >= 0; sh -= 4) {
+            int nib = (int)((exitCode >> sh) & 0xF);
+            buf[n++] = (char)(nib < 10 ? '0' + nib : 'A' + nib - 10);
+        }
+        SharpOSHost_DebugWrite((const void*)buf, n);
+        SharpOSHost_DebugWrite((const void*)" caller=0x", 10);
+        int n2 = 0;
+        int started = 0;
+        for (int sh = 60; sh >= 0; sh -= 4) {
+            int nib = (int)((callerVA >> sh) & 0xF);
+            if (!started && nib == 0 && sh != 0) continue;
+            started = 1;
+            buf[n2++] = (char)(nib < 10 ? '0' + nib : 'A' + nib - 10);
+        }
+        SharpOSHost_DebugWrite((const void*)buf, n2);
+        SharpOSHost_DebugWrite((const void*)"]\n", 2);
+    }
     // step 72 (sage): 0x80131506 == COR_E_EXECUTIONENGINE — a genuine
     // unrecoverable EE FailFast, not the EventPipe-assert→abort cascade we
     // intentionally swallow during bring-up. Continuing past it only
     // produces a post-fatal ignored-stackwalk storm that masks the real
     // result. Halt cleanly so the log ends at the FailFast.
     if (exitCode == 0x80131506u) {
-        SharpOSHost_DebugPrint("] FATAL EE — halting\n");
         SharpOSHost_Panic("TerminateProcess(COR_E_EXECUTIONENGINE 0x80131506)");
     }
-    SharpOSHost_DebugPrint("] ignored — keep going\n");
     return 1;  // pretend success; CoreCLR keeps running
 }
 CRT_REAL(TerminateProcess);
@@ -2261,6 +2410,167 @@ CRT_REAL(HeapCreate);
 extern "C" int HeapDestroy(void* /*h*/) { TRACE_REAL(HeapDestroy); return 1; }
 CRT_REAL(HeapDestroy);
 
+// LocalAlloc / LocalFree — Win32 legacy heap. ThreadPool init's CoreLib
+// uses them for short-lived buffers. LMEM_FIXED=0x0000 / LMEM_ZEROINIT=0x0040;
+// we ignore flags except for zero-init (HEAP_ZERO_MEMORY=0x8) and route
+// through HeapAlloc which forwards to SharpOSHost_HeapAlloc.
+extern "C" void* LocalAlloc(uint32_t uFlags, size_t uBytes) {
+    void* p = SharpOSHost_HeapAlloc(uBytes);
+    if (p != nullptr && (uFlags & 0x0040)) {
+        uint8_t* b = (uint8_t*)p;
+        for (size_t i = 0; i < uBytes; i++) b[i] = 0;
+    }
+    return p;
+}
+CRT_REAL(LocalAlloc);
+
+extern "C" void* LocalFree(void* hMem) {
+    if (hMem != nullptr) SharpOSHost_HeapFree(hMem);
+    return nullptr;   // Win32: returns NULL on success, hMem on failure
+}
+CRT_REAL(LocalFree);
+
+// FormatMessageW — minimal implementation covering the CoreCLR usage in
+// SString::FormatMessage (utilcode/sstring.cpp). Supports:
+//   FORMAT_MESSAGE_FROM_STRING       (0x00000400) — lpSource is the template
+//   FORMAT_MESSAGE_ALLOCATE_BUFFER   (0x00000100) — allocate output via LocalAlloc
+//   FORMAT_MESSAGE_ARGUMENT_ARRAY    (0x00002000) — Arguments is WCHAR*[] not va_list
+// Inserts: %1!s! .. %9!s! → Arguments[N-1] (a WCHAR*). The "!s!" type
+// suffix is optional (we accept bare %N too). Win32 also supports %0
+// (terminate without newline), %% (literal), %n (newline) — handled.
+// No FROM_HMODULE / FROM_SYSTEM (we read templates from compiled-in
+// mscorrc table; both are unused here). Step103d.
+extern "C" uint32_t FormatMessageW(uint32_t dwFlags,
+                                   const void* lpSource,
+                                   uint32_t /*dwMessageId*/,
+                                   uint32_t /*dwLanguageId*/,
+                                   wchar_t* lpBuffer,
+                                   uint32_t nSize,
+                                   void* Arguments)
+{
+    if (!(dwFlags & 0x00000400)) return 0;          // require FROM_STRING
+    if (lpSource == nullptr || lpBuffer == nullptr) return 0;
+    const wchar_t* src = (const wchar_t*)lpSource;
+    const wchar_t** args = (const wchar_t**)Arguments;
+    bool allocate = (dwFlags & 0x00000100) != 0;
+
+    auto wstrlen = [](const wchar_t* s) -> size_t {
+        size_t n = 0; if (!s) return 0; while (s[n] != 0) ++n; return n;
+    };
+
+    // Pass 1: compute output length.
+    size_t outLen = 0;
+    for (const wchar_t* p = src; *p != 0; ) {
+        if (*p == L'%') {
+            wchar_t c = *(p + 1);
+            if (c >= L'1' && c <= L'9' && args != nullptr) {
+                outLen += wstrlen(args[c - L'1']);
+                p += 2;
+                // optional "!fmt!" suffix — skip until second '!' inclusive
+                if (*p == L'!') {
+                    ++p;
+                    while (*p != 0 && *p != L'!') ++p;
+                    if (*p == L'!') ++p;
+                }
+                continue;
+            }
+            if (c == L'%')  { outLen += 1; p += 2; continue; }   // %%
+            if (c == L'n')  { outLen += 1; p += 2; continue; }   // newline
+            if (c == L'0')  { p += 2; break; }                   // %0 terminate
+            // Unknown %X — copy literal
+            outLen += 1; ++p; continue;
+        }
+        outLen += 1; ++p;
+    }
+
+    // Allocate or validate output buffer.
+    wchar_t* dst;
+    size_t dstCap;
+    if (allocate) {
+        wchar_t* allocated = (wchar_t*)LocalAlloc(0, (outLen + 1) * sizeof(wchar_t));
+        if (allocated == nullptr) return 0;
+        *(wchar_t**)lpBuffer = allocated;
+        dst = allocated;
+        dstCap = outLen + 1;
+    } else {
+        if (nSize == 0) return 0;
+        dst = lpBuffer;
+        dstCap = nSize;
+    }
+
+    // Pass 2: emit.
+    size_t w = 0;
+    auto put_ch = [&](wchar_t ch) {
+        if (w + 1 < dstCap) dst[w++] = ch;
+    };
+    auto put_str = [&](const wchar_t* s) {
+        if (!s) return;
+        for (; *s != 0; ++s) put_ch(*s);
+    };
+    for (const wchar_t* p = src; *p != 0; ) {
+        if (*p == L'%') {
+            wchar_t c = *(p + 1);
+            if (c >= L'1' && c <= L'9' && args != nullptr) {
+                put_str(args[c - L'1']);
+                p += 2;
+                if (*p == L'!') {
+                    ++p;
+                    while (*p != 0 && *p != L'!') ++p;
+                    if (*p == L'!') ++p;
+                }
+                continue;
+            }
+            if (c == L'%')  { put_ch(L'%');  p += 2; continue; }
+            if (c == L'n')  { put_ch(L'\n'); p += 2; continue; }
+            if (c == L'0')  { p += 2; break; }
+            put_ch(*p); ++p; continue;
+        }
+        put_ch(*p); ++p;
+    }
+    dst[w] = 0;
+    return (uint32_t)w;
+}
+CRT_REAL(FormatMessageW);
+
+// Win32 condition variable shim — used by PortableThreadPool worker
+// dispatch. SleepConditionVariableSRW and WakeAllConditionVariable are
+// already defined upstream as no-op stubs (return 1 / void). We only
+// need to add the missing InitializeConditionVariable + SleepConditionVariableCS
+// + WakeConditionVariable so the kernel32 resolver can wire all five.
+// Cooperative single-CPU means Sleep can just return immediately —
+// workers won't truly block but progress through the work queue.
+extern "C" void InitializeConditionVariable(void* /*cv*/) {
+    /* opaque pointer; first Sleep/Wake handles state */
+}
+CRT_REAL(InitializeConditionVariable);
+
+extern "C" int SleepConditionVariableCS(void* /*cv*/, void* /*cs*/, uint32_t /*dwMs*/) {
+    // Cooperative single-CPU: just succeed. Worker re-checks predicate
+    // and may loop. Matching shape of existing SleepConditionVariableSRW.
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SleepConditionVariableCS);
+
+extern "C" void WakeConditionVariable(void* /*cv*/) {
+    /* paired no-op with SleepConditionVariableCS */
+}
+CRT_REAL(WakeConditionVariable);
+
+// GetSystemTimes — ThreadPool hill-climber polls this for CPU utilization.
+// Win32 reports idle/kernel/user time as FILETIME (100-ns ticks since
+// some epoch). For single-CPU cooperative kernel we report all zeros;
+// hill-climber sees 100% busy and may try to spawn more workers (capped
+// by max thread count), which is fine for our test case.
+extern "C" int GetSystemTimes(void* lpIdle, void* lpKernel, void* lpUser) {
+    if (lpIdle)   { ((uint64_t*)lpIdle)[0]   = 0; }
+    if (lpKernel) { ((uint64_t*)lpKernel)[0] = 0; }
+    if (lpUser)   { ((uint64_t*)lpUser)[0]   = 0; }
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(GetSystemTimes);
+
 // --- Virtual memory ---
 //
 // SharpOS unikernel: no W^X enforcement, no demand-paging, single AS. All
@@ -3124,7 +3434,6 @@ extern "C" uint32_t SharpOS_EventWriteEx(uint64_t /*RegHandle*/, const void* /*E
 // IsATty→0 so ConsolePal.Unix takes the simple StreamWriter path (no termios,
 // no terminfo, no signal handling). Write fd 1/2 → COM1 via SharpOSHost.
 // stdin reads → EOF. Everything else benign so cctor/init never throws.
-extern "C" void SharpOSHost_DebugWrite(const void* buf, int32_t len);
 
 extern "C" int32_t SharpOS_SN_Write(intptr_t /*fd*/, const void* buffer, int32_t bufferSize) {
     if (buffer != nullptr && bufferSize > 0)
@@ -3262,9 +3571,15 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         // Unknown → print the exact name so we extend precisely, and
         // return nullptr (managed surfaces EntryPointNotFound, not the
         // DllNotFound panic — we progress + learn the next symbol).
-        SharpOSHost_DebugPrint("[GetProcAddress kernel32] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        // Phase E11: route via DebugWrite (not Verbose-gated) so the
+        // missing-symbol name shows up in the default-quiet log. Drop
+        // back to DebugPrint after E11 acceptance.
+        const char* prefix = "[GetProcAddress kernel32] unknown name=";
+        int prefixLen = 0; while (prefix[prefixLen] != 0) prefixLen++;
+        int nameLen = 0;   while (name[nameLen]   != 0) nameLen++;
+        SharpOSHost_DebugWrite((const void*)prefix, prefixLen);
+        SharpOSHost_DebugWrite((const void*)name,   nameLen);
+        SharpOSHost_DebugWrite((const void*)"\n",   1);
         g_LastError = 127;
         return nullptr;
     }
@@ -3487,6 +3802,85 @@ extern "C" int RtlDeleteFunctionTable(void* /*functionTable*/) {
 }
 CRT_REAL(RtlDeleteFunctionTable);
 
+// Phase E10 Path B: register a stub heap (LoaderAllocator precode /
+// call-counting / VSD / dynamic-helper) as a leaf-unwind range.
+// SehUnwind synthesizes a "ret-only" RUNTIME_FUNCTION for any RIP in
+// this range so the unwinder pops [rsp] into Rip and steps past the
+// stub to the JIT method that called it. Without this, exceptions
+// thrown from a runtime helper called BY a stub can't unwind past
+// the stub layer — see step103 (ThreadPool init throw).
+extern "C" __attribute__((weak)) void SharpOSHost_RegisterStubRange(
+    uint64_t /*base*/, uint64_t /*length*/) {}
+
+extern "C" void SharpOSRegisterStubHeap(void* start, uint64_t length) {
+    if (start == nullptr || length == 0) return;
+    SharpOSHost_DebugPrint("[StubHeap reg] start=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)start);
+    SharpOSHost_DebugPrint(" len=0x");
+    SharpOSHost_DebugPrintHex(length);
+    SharpOSHost_DebugPrint("\n");
+    SharpOSHost_RegisterStubRange((uint64_t)start, length);
+}
+
+// Phase E11: IO completion port -- Win32 names → SharpOSHost_Iocp* in
+// kernel C#. Backs CoreCLR's LowLevelLifoSemaphore.Windows.cs which is
+// used by PortableThreadPool / TimerQueue.Portable. Implementation is a
+// LIFO counting semaphore via kernel.Threading.Semaphore (already LIFO);
+// no file association, no overlapped completion. Just enough for the
+// LIFO sem use case.
+extern "C" __attribute__((weak)) uint64_t SharpOSHost_IocpCreate(int /*maxConcurrent*/) { return 0; }
+extern "C" __attribute__((weak)) int      SharpOSHost_IocpWait(uint64_t /*handle*/, int /*timeoutMs*/) { return 0; }
+extern "C" __attribute__((weak)) int      SharpOSHost_IocpPost(uint64_t /*handle*/, int /*count*/) { return 0; }
+
+// CreateIoCompletionPort(file, existingPort, completionKey, threadCount)
+// Win32 semantics:
+//   file == INVALID_HANDLE_VALUE && existingPort == NULL → create a
+//   standalone IOCP not associated with any file. That's the only case
+//   PortableThreadPool ever uses (LIFO sem). Any other shape returns
+//   NULL and we leave LastError = ERROR_INVALID_PARAMETER.
+extern "C" void* CreateIoCompletionPort(void* file, void* existingPort,
+                                        uint64_t /*completionKey*/, uint32_t threadCount) {
+    if (existingPort != nullptr || (intptr_t)file != -1) {
+        g_LastError = 87;   // ERROR_INVALID_PARAMETER
+        return nullptr;
+    }
+    int cap = threadCount == 0 ? 1 : (int)threadCount;
+    uint64_t h = SharpOSHost_IocpCreate(cap);
+    if (h == 0) { g_LastError = 8 /*ERROR_NOT_ENOUGH_MEMORY*/; return nullptr; }
+    g_LastError = 0;
+    return (void*)h;
+}
+CRT_REAL(CreateIoCompletionPort);
+
+// GetQueuedCompletionStatus(port, *bytes, *key, *overlapped, timeoutMs)
+// Blocks until PostQueuedCompletionStatus pings us (or timeout). Win32
+// returns TRUE on success, FALSE on timeout (LastError = WAIT_TIMEOUT).
+extern "C" int GetQueuedCompletionStatus(void* port, uint32_t* lpNumBytes,
+                                         uint64_t* lpKey, void** lpOverlapped,
+                                         uint32_t dwMilliseconds) {
+    if (lpNumBytes   != nullptr) *lpNumBytes   = 0;
+    if (lpKey        != nullptr) *lpKey        = 0;
+    if (lpOverlapped != nullptr) *lpOverlapped = nullptr;
+    if (port == nullptr) { g_LastError = 6 /*ERROR_INVALID_HANDLE*/; return 0; }
+    int tmo = (int)dwMilliseconds;
+    if (dwMilliseconds == 0xFFFFFFFFu) tmo = -1;   // INFINITE
+    int ok = SharpOSHost_IocpWait((uint64_t)port, tmo);
+    if (ok == 0) { g_LastError = 258 /*WAIT_TIMEOUT*/; return 0; }
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(GetQueuedCompletionStatus);
+
+extern "C" int PostQueuedCompletionStatus(void* port, uint32_t /*dwBytes*/,
+                                          uint64_t /*dwKey*/, void* /*lpOverlapped*/) {
+    if (port == nullptr) { g_LastError = 6 /*ERROR_INVALID_HANDLE*/; return 0; }
+    int ok = SharpOSHost_IocpPost((uint64_t)port, 1);
+    if (ok == 0) { g_LastError = 8 /*ERROR_NOT_ENOUGH_MEMORY*/; return 0; }
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(PostQueuedCompletionStatus);
+
 // ---------------------------------------------------------------------------
 // kernel32/kernelbase/ntdll P/Invoke resolver. The framework assemblies are
 // Windows-flavored; their [DllImport("kernel32.dll")] surface is statically
@@ -3522,6 +3916,8 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"HeapFree"))                     return (void*)&HeapFree;
     if (sharpos_streq(n,"HeapCreate"))                   return (void*)&HeapCreate;
     if (sharpos_streq(n,"HeapDestroy"))                  return (void*)&HeapDestroy;
+    if (sharpos_streq(n,"LocalAlloc"))                   return (void*)&LocalAlloc;
+    if (sharpos_streq(n,"LocalFree"))                    return (void*)&LocalFree;
     if (sharpos_streq(n,"GlobalMemoryStatusEx"))         return (void*)&GlobalMemoryStatusEx;
     if (sharpos_streq(n,"GetLargePageMinimum"))          return (void*)&GetLargePageMinimum;
     // System info / topology
@@ -3568,6 +3964,18 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"WaitOnAddress"))                return (void*)&WaitOnAddress;
     if (sharpos_streq(n,"WakeByAddressSingle"))          return (void*)&WakeByAddressSingle;
     if (sharpos_streq(n,"WakeByAddressAll"))             return (void*)&WakeByAddressAll;
+    // Phase E11: IOCP shim for LowLevelLifoSemaphore.Windows.cs
+    if (sharpos_streq(n,"CreateIoCompletionPort"))       return (void*)&CreateIoCompletionPort;
+    if (sharpos_streq(n,"GetQueuedCompletionStatus"))    return (void*)&GetQueuedCompletionStatus;
+    if (sharpos_streq(n,"PostQueuedCompletionStatus"))   return (void*)&PostQueuedCompletionStatus;
+    if (sharpos_streq(n,"InitializeConditionVariable")) return (void*)&InitializeConditionVariable;
+    if (sharpos_streq(n,"SleepConditionVariableCS"))    return (void*)&SleepConditionVariableCS;
+    if (sharpos_streq(n,"SleepConditionVariableSRW"))   return (void*)&SleepConditionVariableSRW;
+    if (sharpos_streq(n,"WakeConditionVariable"))       return (void*)&WakeConditionVariable;
+    if (sharpos_streq(n,"WakeAllConditionVariable"))    return (void*)&WakeAllConditionVariable;
+    if (sharpos_streq(n,"GetSystemTimes"))              return (void*)&GetSystemTimes;
+    if (sharpos_streq(n,"QueryUnbiasedInterruptTime"))   return (void*)&QueryUnbiasedInterruptTime;
+    if (sharpos_streq(n,"GetCurrentProcessorNumberEx"))  return (void*)&GetCurrentProcessorNumberEx;
     if (sharpos_streq(n,"CloseHandle"))                  return (void*)&CloseHandle;
     if (sharpos_streq(n,"DuplicateHandle"))              return (void*)&DuplicateHandle;
     if (sharpos_streq(n,"WaitForSingleObject"))          return (void*)&WaitForSingleObject;

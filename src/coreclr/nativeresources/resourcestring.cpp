@@ -20,11 +20,18 @@ static int CompareNativeStringResources(const void *a, const void *b)
     return 1;
 }
 
-int LoadNativeStringResource(const NativeStringResourceTable &nativeStringResourceTable, unsigned int iResourceID, WCHAR* szBuffer, int iMax, int *pcwchUsed)
+int LoadNativeStringResource(const NativeStringResourceTable &nativeStringResourceTable, unsigned int iResourceID, char16_t* szBuffer, int iMax, int *pcwchUsed)
 {
     int len = 0;
     if (szBuffer && iMax)
     {
+        // SharpOS port: signature is char16_t* (matches the header).
+        // On Unix WCHAR is char16_t (same type, no cast needed). On
+        // HOST_WINDOWS+TARGET_SHARPOS WCHAR is wchar_t (also 16-bit,
+        // bit-compatible) so reinterpret_cast on Win32 API calls is
+        // safe.
+        WCHAR* wszBuffer = reinterpret_cast<WCHAR*>(szBuffer);
+
         // Search the sorted set of resources for the ID we're interested in.
         NativeStringResource searchEntry = {iResourceID, NULL};
         NativeStringResource *resourceEntry = (NativeStringResource*)bsearch(
@@ -36,7 +43,7 @@ int LoadNativeStringResource(const NativeStringResourceTable &nativeStringResour
 
         if (resourceEntry != NULL)
         {
-            len = MultiByteToWideChar(CP_UTF8, 0, resourceEntry->resourceString, -1, szBuffer, iMax);
+            len = MultiByteToWideChar(CP_UTF8, 0, resourceEntry->resourceString, -1, wszBuffer, iMax);
             if (len == 0)
             {
                 int hr = HRESULT_FROM_GetLastError();
@@ -52,19 +59,19 @@ int LoadNativeStringResource(const NativeStringResourceTable &nativeStringResour
         {
             // The resource ID wasn't found in our array. Fall back on returning the ID as a string.
             const WCHAR undefMsg[] = W("Undefined resource string ID:0x");
-            wcscpy_s(szBuffer, iMax, undefMsg);
+            wcscpy_s(wszBuffer, iMax, undefMsg);
 
             // Compute if there is enough space for the message and ID.
             WCHAR* nxt = NULL;
             int extraSpace = iMax - (ARRAY_SIZE(undefMsg) - 1);
             if (0 < extraSpace)
             {
-                nxt = FormatInteger(szBuffer + (ARRAY_SIZE(undefMsg) - 1), extraSpace, "%X", iResourceID);
+                nxt = FormatInteger(wszBuffer + (ARRAY_SIZE(undefMsg) - 1), extraSpace, "%X", iResourceID);
             }
 
             if (nxt != NULL)
             {
-                len = (int)(nxt - szBuffer);
+                len = (int)(nxt - wszBuffer);
             }
             else
             {

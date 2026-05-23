@@ -256,7 +256,14 @@ if(CLR_CMAKE_HOST_UNIX)
   add_compile_options($<$<COMPILE_LANG_AND_ID:CXX,Clang>:-Wno-sync-alignment>)
   add_compile_options($<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-conversion-null>)
   add_compile_options($<$<COMPILE_LANG_AND_ID:CXX,GNU>:-Wno-pointer-arith>)
+endif(CLR_CMAKE_HOST_UNIX)
 
+# Native string resource pipeline: compile-time mscorrc.rc → C++ table.
+# Originally Unix-only (libcoreclr.so embeds the table). Reused under
+# TARGET_SHARPOS so HOST_WINDOWS+TARGET_SHARPOS cross-compiles produce
+# the same compiled-in resource lookup (no runtime mscorrc.dll load,
+# no LoadResource cascade). See docs/eh-model.md "GetThrowableMessage".
+if(CLR_CMAKE_HOST_UNIX OR CLR_CMAKE_TARGET_SHARPOS)
   set (NATIVE_RESOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/nativeresources)
   include_directories(${NATIVE_RESOURCE_DIR})
 
@@ -302,7 +309,7 @@ if(CLR_CMAKE_HOST_UNIX)
   endfunction()
 
   add_subdirectory(nativeresources)
-endif(CLR_CMAKE_HOST_UNIX)
+endif()
 
 add_subdirectory(utilcode)
 add_subdirectory(inc)
