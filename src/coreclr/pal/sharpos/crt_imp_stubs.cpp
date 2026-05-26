@@ -747,10 +747,15 @@ static inline void trace_real(const char* fn, uint64_t caller)
 
 #define TRACE_REAL(NAME) trace_real(#NAME, (uint64_t)__builtin_return_address(0))
 
+extern "C" long long SharpOSHost_GetUtcFileTime(void);
 extern "C" int QueryPerformanceCounter(int64_t* out) {
     TRACE_REAL(QueryPerformanceCounter);
-    static int64_t ticks = 0;
-    if (out) *out = ++ticks;
+    // Tie QPC to the host's real 100ns clock so timing-sensitive BCL paths
+    // (Stopwatch.GetTimestamp, ProcessorIdCache.ProcessorNumberSpeedCheck,
+    //  SpinWait, TimerQueue scheduling) observe forward progress.
+    // QueryPerformanceFrequency reports 10_000_000 below, matching FILETIME's
+    // 100ns resolution exactly. Monotonic by construction (UTC FILETIME).
+    if (out) *out = (int64_t)SharpOSHost_GetUtcFileTime();
     return 1;
 }
 CRT_REAL(QueryPerformanceCounter);
@@ -764,8 +769,9 @@ CRT_REAL(QueryPerformanceFrequency);
 
 extern "C" uint64_t GetTickCount64(void) {
     TRACE_REAL(GetTickCount64);
-    static uint64_t t = 0;
-    return ++t;
+    // Real-time milliseconds since boot (FILETIME / 10_000 = ms since 1601;
+    // monotonicity is what callers care about, absolute origin doesn't).
+    return (uint64_t)SharpOSHost_GetUtcFileTime() / 10000ULL;
 }
 CRT_REAL(GetTickCount64);
 
@@ -857,10 +863,10 @@ CRT_REAL(IsDebuggerPresent);
 // wait deadlines. Each call advances by 1 ms equivalent so the runtime
 // sees monotone progress. Placed after g_LastError decl (line ~835).
 extern "C" int QueryUnbiasedInterruptTime(uint64_t* out) {
-    if (out) {
-        static uint64_t t = 0;
-        *out = (++t) * 10000;
-    }
+    // Tie to host UTC FILETIME (100-ns, HPET-mixed for sub-second res) so
+    // TimerQueue.TickCount64 and other consumers observe true elapsed time
+    // rather than a per-call counter that breaks SpinWait/timeout math.
+    if (out) *out = (uint64_t)SharpOSHost_GetUtcFileTime();
     g_LastError = 0;
     return 1;
 }
@@ -1613,9 +1619,26 @@ extern "C" uint32_t WaitForSingleObjectEx(void* h, uint32_t ms, int /*alert*/) {
     return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)h, ms);
 }
 CRT_REAL(WaitForSingleObjectEx);
-extern "C" uint32_t WaitForMultipleObjects(uint32_t /*n*/, void* /*ph*/, int /*all*/, uint32_t /*ms*/)              { TRACE_REAL(WaitForMultipleObjects);   return 0; }
+// step110-followup: forward single-handle WaitForMultiple* to the
+// proper WaitForSingleObject path. Monitor.Wait → CLREvent.Wait →
+// DoAppropriateAptStateWait → WaitForMultipleObjectsEx(1, &h, FALSE, ms, TRUE);
+// pre-fix this was a stub returning 0 (=WAIT_OBJECT_0) which made the
+// MRES.Wait / Task.Wait pair busy-spin forever. Multi-handle WaitAll/
+// WaitAny still not implemented — falls through to WAIT_FAILED so a
+// caller using it gets a clear failure instead of a silent bogus signal.
+extern "C" uint32_t WaitForMultipleObjects(uint32_t n, void* ph, int /*all*/, uint32_t ms) {
+    TRACE_REAL(WaitForMultipleObjects);
+    if (n == 1 && ph != nullptr)
+        return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)(*(void**)ph), ms);
+    return 0xFFFFFFFFu; // WAIT_FAILED
+}
 CRT_REAL(WaitForMultipleObjects);
-extern "C" uint32_t WaitForMultipleObjectsEx(uint32_t /*n*/, void* /*ph*/, int /*all*/, uint32_t /*ms*/, int /*alert*/) { TRACE_REAL(WaitForMultipleObjectsEx); return 0; }
+extern "C" uint32_t WaitForMultipleObjectsEx(uint32_t n, void* ph, int /*all*/, uint32_t ms, int /*alert*/) {
+    TRACE_REAL(WaitForMultipleObjectsEx);
+    if (n == 1 && ph != nullptr)
+        return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)(*(void**)ph), ms);
+    return 0xFFFFFFFFu; // WAIT_FAILED
+}
 CRT_REAL(WaitForMultipleObjectsEx);
 
 // --- Threading: Phase E9.a real bridge to kernel scheduler ---
