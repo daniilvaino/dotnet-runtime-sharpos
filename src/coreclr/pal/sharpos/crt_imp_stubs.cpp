@@ -825,6 +825,20 @@ CRT_REAL(GetCurrentProcessId);
 extern "C" uint32_t GetCurrentThreadId(void)  { TRACE_REAL(GetCurrentThreadId);  return SharpOSHost_GetCurrentThreadId(); }
 CRT_REAL(GetCurrentThreadId);
 
+// step111-followup: PortableThreadPool.WorkerThread.IsIOPending P/Invokes
+// this on the worker-exit path (ShouldExitWorker -> IsIOPending). Without
+// a stub the P/Invoke resolution throws EntryPointNotFoundException on a
+// background ThreadPool worker thread; no catch above worker root frame
+// means uncaught propagation -> kernel HALT during shutdown. We don't
+// actually track per-thread IO, so always report "no IO pending" -- the
+// worker proceeds to its normal exit logic. Out-param is Win32 BOOL
+// (4 bytes); return value is BOOL too.
+extern "C" int GetThreadIOPendingFlag(void* /*hThread*/, int* lpIOIsPending) {
+    if (lpIOIsPending) *lpIOIsPending = 0; // FALSE
+    return 1; // TRUE = success
+}
+CRT_REAL(GetThreadIOPendingFlag);
+
 // Phase E9.b step 102 -- per-thread LastError via TEB+0x68
 // (NT_TIB.LastErrorValue, sage-2 add per docs/threading-architecture.md
 // §12). Pre-E9.b LastError was a single global -- on multi-thread
@@ -3920,6 +3934,7 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"GetCurrentThread"))             return (void*)&GetCurrentThread;
     if (sharpos_streq(n,"GetCurrentProcessId"))          return (void*)&GetCurrentProcessId;
     if (sharpos_streq(n,"GetCurrentThreadId"))           return (void*)&GetCurrentThreadId;
+    if (sharpos_streq(n,"GetThreadIOPendingFlag"))       return (void*)&GetThreadIOPendingFlag;
     if (sharpos_streq(n,"IsDebuggerPresent"))            return (void*)&IsDebuggerPresent;
     if (sharpos_streq(n,"TerminateProcess"))             return (void*)&TerminateProcess;
     if (sharpos_streq(n,"RaiseFailFastException"))       return (void*)&RaiseFailFastException;
