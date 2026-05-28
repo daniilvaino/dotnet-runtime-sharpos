@@ -2234,28 +2234,14 @@ template <typename GcInfoEncoding> OBJECTREF* TGcInfoDecoder<GcInfoEncoding>::Ge
 
         SIZE_T * pFrameReg = (SIZE_T*) GetRegisterSlot(m_StackBaseRegister, pRD);
 
-#if defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(DACCESS_COMPILE)
-        // step 72 — proven step-71-family defect. SharpOS's C#-side
-        // SehUnwind sets pRD->pCurrentContextPointers->Rbp (what
-        // GetRegisterSlot dereferences) to a WRONG saved-RBP slot for
-        // unwound frames: measured FR=*pCurrentContextPointers->Rbp
-        // =0x..C00 vs the true frame RBP pCurrentContext->Rbp=0x..C80
-        // (Δ0x80). Every GC_FRAMEREG_REL slot then computes off the bad
-        // base → an int local is reported to the GC as an OBJECTREF →
-        // Object::Validate → GetGCSafeMethodTable derefs garbage → #PF
-        // (the System.Text.Json reflection crash; reproduced minimally by
-        // a value-type struct with refs live across GC.Collect). The
-        // frame register VALUE in pCurrentContext is trustworthy — same
-        // conclusion as step-71's CallCatchFunclet local guarantee. This
-        // is the analogous local guarantee for the GC root-scan consumer;
-        // the shared upstream root (SehUnwind's pCurrentContextPointers)
-        // remains the future hardening target. RBP == AMD64 reg 5
-        // (confirmed at runtime: GcInfo m_StackBaseRegister == 5).
-        if (m_StackBaseRegister == 5 && pRD->pCurrentContext != NULL)
-        {
-            return (OBJECTREF*)((SIZE_T)pRD->pCurrentContext->Rbp + spOffset);
-        }
-#endif // TARGET_SHARPOS && TARGET_AMD64 && !DACCESS_COMPILE
+        // step113: the step72 SharpOS-only GC_FRAMEREG_REL override
+        // (return pCurrentContext->Rbp + spOffset) was REMOVED here --
+        // confirmed redundant after step112 wired SehUnwind to fill
+        // KNONVOLATILE_CONTEXT_POINTERS correctly. Validated with override
+        // disabled by both the "GC FRAMEREG_REL refs across Collect" probe
+        // and the exact original trigger "System.Text.Json roundtrip
+        // (reflection)" -- both [OK], no GC misreport, no crash. The
+        // upstream GetRegisterSlot path below is now correct for us.
 
 #if defined(TARGET_UNIX) && !defined(FEATURE_NATIVEAOT)
         // On PAL, we don't always have the context pointers available due to
