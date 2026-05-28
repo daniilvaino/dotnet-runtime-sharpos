@@ -411,7 +411,19 @@ static void lm_sc(double x,double*ps,double*pc){
 static double lm_sin(double x){ double s,c; lm_sc(x,&s,&c); return s; }
 static double lm_cos(double x){ double s,c; lm_sc(x,&s,&c); return c; }
 static double lm_tan(double x){ double s,c; lm_sc(x,&s,&c); return s/c; }
-static double lm_sqrt(double x){ return __builtin_sqrt(x); }
+// NB: must NOT use __builtin_sqrt here. In a Debug (/Od) build clang-cl
+// does not lower __builtin_sqrt to the sqrtsd instruction -- it emits a
+// `call sqrt`, which lands in our own sqrt() stub below (line ~446),
+// which calls lm_sqrt() again -> infinite mutual recursion -> 1 MiB
+// stack overflow -> #PF -> #DF -> triple fault. Surfaced step112-followup
+// SYM-002 (ThreadPool hill-climbing Complex.Abs -> Math.Sqrt was the
+// first heavy libc-path sqrt consumer). Emit sqrtsd directly so there is
+// never a library call back into sqrt().
+static double lm_sqrt(double x){
+    double r;
+    __asm__ ("sqrtsd %1, %0" : "=x"(r) : "x"(x));
+    return r;
+}
 static double lm_atan(double x){
     int neg=0,inv=0; if(x<0){x=-x;neg=1;} if(x>1.0){x=1.0/x;inv=1;}
     double x2=x*x;
