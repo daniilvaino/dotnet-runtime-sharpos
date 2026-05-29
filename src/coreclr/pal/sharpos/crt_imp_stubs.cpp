@@ -114,7 +114,7 @@ static void __sharpos_crt_trap_common(const char* name, uint64_t caller_rip)
 // __stdio_common_v* — real impls below (silent no-op; CoreCLR uses these
 // only for diagnostic log lines we don't surface).
 CRT_STUB(_atoi64)
-CRT_STUB(_callnewh)
+// _callnewh — real impl below (Release operator-new failure path).
 CRT_STUB(_dup)
 // _errno — real impl below (returns ptr to global errno)
 CRT_STUB(_fdopen)
@@ -344,6 +344,15 @@ CRT_STUB(WriteFile)
 //
 // Macro for symbol pair: function NAME + __imp_NAME data pointing to it.
 #define CRT_REAL(NAME) extern "C" void* __imp_##NAME = (void*)&NAME
+
+// _callnewh: MSVC CRT new-handler invoker. The Release operator-new
+// failure path calls it (Debug took a different path, so this only
+// surfaced under -Configuration Release). Returns nonzero if a new
+// handler was registered and wants the allocation retried; 0 otherwise.
+// We don't support _set_new_handler, so return 0 -- operator new then
+// fails normally (throws bad_alloc / returns null) instead of trapping.
+extern "C" int _callnewh(size_t /*size*/) { return 0; }
+CRT_REAL(_callnewh);
 
 // ─── Compact libm (non-fatal replacement for the trap-stubs) ────────────
 // CoreCLR/BCL calls C math internally (e.g. `log` during string/Number

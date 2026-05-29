@@ -653,8 +653,13 @@ VOID Object::ValidateInner(BOOL bDeep, BOOL bVerifyNextHeader, BOOL bVerifySyncB
                     if (pMT != nullptr)
                     {
                         SharpOSHost_DebugPrint(" name=");
+                        // GetDebugClassName is _DEBUG-only; guard for Release.
+#ifdef _DEBUG
                         const char* n = pMT->GetDebugClassName();
                         SharpOSHost_DebugPrint(n ? n : "<null>");
+#else
+                        SharpOSHost_DebugPrint("<_DEBUG only>");
+#endif
                     }
                     // GC-range classification: is `this` even inside the GC's
                     // [g_lowest,g_highest) window (→ unsegmented region) or
@@ -697,6 +702,9 @@ VOID Object::ValidateInner(BOOL bDeep, BOOL bVerifyNextHeader, BOOL bVerifySyncB
                     // our own coreclr_initialize property names — an
                     // unambiguous fingerprint of WHICH dictionary this is.
                     // All derefs are guarded; we're inside the AV-okay holder.
+                    // Dict interpretation keys off the debug class name,
+                    // which only exists in _DEBUG. Skip entirely in Release.
+#ifdef _DEBUG
                     if (pMT != nullptr)
                     {
                         const char* nm = pMT->GetDebugClassName();
@@ -732,6 +740,7 @@ VOID Object::ValidateInner(BOOL bDeep, BOOL bVerifyNextHeader, BOOL bVerifySyncB
                             SharpOSHost_DebugPrint("\n");
                         }
                     }
+#endif // _DEBUG (dict interpretation)
                 }
             }
 #else

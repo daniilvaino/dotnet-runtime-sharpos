@@ -67,6 +67,8 @@ HRESULT CQuickMemoryBase<SIZE, INCREMENT>::ReSizeNoThrow(SIZE_T iItems)
     return NOERROR;
 }
 
+template HRESULT CQuickMemoryBase<CQUICKBYTES_BASE_SIZE, CQUICKBYTES_INCREMENTAL_SIZE>::ReSizeNoThrow(SIZE_T iItems);
+
 
 /*************************************************************************************
 *

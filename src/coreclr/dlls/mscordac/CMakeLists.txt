@@ -129,6 +129,14 @@ add_library_clr(mscordaccore SHARED ${CLR_DAC_SOURCES} $<TARGET_OBJECTS:mscordac
 
 set_target_properties(mscordacobj mscordaccore PROPERTIES DAC_COMPONENT TRUE)
 
+if(CLR_CMAKE_HOST_WIN32 AND CLR_CMAKE_TARGET_SHARPOS)
+    # The mscordaccore.exp custom command below uses MSVC lib.exe to create
+    # the export object. lib.exe cannot read clang-cl ThinLTO object files.
+    set_target_properties(mscordacobj PROPERTIES
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
+        INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
+endif()
+
 if(CLR_CMAKE_HOST_LINUX)
     add_dependencies(mscordaccore lib_redefines_inc)
 endif(CLR_CMAKE_HOST_LINUX)

@@ -77,9 +77,9 @@ void RemoveThreadFromAsyncSafeMap(uint64_t, void*)
 // are unreachable at smoke runtime (no allocation paths exercised).
 // ---------------------------------------------------------------------------
 
-extern "C" void* SharpOSHost_HeapAlloc(size_t /*size*/)        { return nullptr; }
-extern "C" void  SharpOSHost_HeapFree(void* /*ptr*/)            { }
-extern "C" void* SharpOSHost_HeapRealloc(void* /*old*/, size_t /*size*/) { return nullptr; }
+extern "C" __attribute__((weak)) void* SharpOSHost_HeapAlloc(size_t /*size*/) { return nullptr; }
+extern "C" __attribute__((weak)) void  SharpOSHost_HeapFree(void* /*ptr*/) {}
+extern "C" __attribute__((weak)) void* SharpOSHost_HeapRealloc(void* /*old*/, size_t /*size*/) { return nullptr; }
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) {}
 // step 71 — weak fallback so coreclr.dll links the [MDLM] probe's ungated

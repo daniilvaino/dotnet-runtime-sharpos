@@ -118,7 +118,7 @@ $CMakeArgs = '-DCLR_CMAKE_TARGET_SHARPOS=1'
 # (`clr.nativeaotlibs` condition gated AND on NativeAotSupported).
 # `/p:` (slash, MSBuild syntax) — не `-p:`. PowerShell видит `-p` как ambiguous
 # abbreviated param (matches -pack, -pgoinstrument, -properties, -PipelineVariable).
-$MsBuildProps = '/p:NativeAotSupported=false'
+$MsBuildProps = '/p:NativeAotSupported=false /p:SharpOSBuild=true'
 
 Push-Location $ForkRoot
 try {
@@ -135,7 +135,7 @@ try {
             @{ Path = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'; Label = 'coreclr_static.lib (kernel image input)' }
             @{ Path = Join-Path $BinDir 'coreclr.dll';        Label = 'coreclr.dll (SHARED target)' }
             @{ Path = Join-Path $BinDir 'mscordaccore.dll';   Label = 'mscordaccore.dll (DAC)' }
-            @{ Path = Join-Path $BinDir 'mscorrc.dll';        Label = 'mscorrc.dll (resources)' }
+            @{ Path = Join-Path $ObjDir 'dlls/mscorrc/mscorrc.lib'; Label = 'mscorrc.lib (compiled-in resources)' }
         )
         foreach ($o in $Outputs) {
             if (Test-Path $o.Path) {

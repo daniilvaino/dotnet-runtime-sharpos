@@ -533,7 +533,7 @@
     <ProjectToBuild Include="$(CoreClrProjectRoot)crossgen-corelib.proj" Category="clr" />
   </ItemGroup>
 
-  <ItemGroup Condition="$(_subset.Contains('+clr.packages+'))">
+  <ItemGroup Condition="$(_subset.Contains('+clr.packages+')) and '$(SharpOSBuild)' != 'true'">
     <ProjectToBuild Include="$(CoreClrProjectRoot).nuget\coreclr-packages.proj" Category="clr" />
   </ItemGroup>
 
@@ -579,7 +579,7 @@
   </ItemGroup>
 
   <!-- Host sets -->
-  <ItemGroup Condition="$(_subset.Contains('+host.native+'))">
+  <ItemGroup Condition="$(_subset.Contains('+host.native+')) and '$(SharpOSBuild)' != 'true'">
     <CorehostProjectToBuild Include="$(SharedNativeRoot)corehost\corehost.proj" />
     <ProjectToBuild Include="@(CorehostProjectToBuild)" AdditionalProperties="$(TargetCxxLibraryProperties)" Category="host" />
   </ItemGroup>

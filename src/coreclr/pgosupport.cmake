@@ -15,6 +15,13 @@ endif(NOT WIN32)
 
 # Adds Profile Guided Optimization (PGO) flags to the current target
 function(add_pgo TargetName)
+    if(CLR_CMAKE_TARGET_SHARPOS)
+        if(CLR_CMAKE_PGO_INSTRUMENT OR CLR_CMAKE_PGO_OPTIMIZE)
+            message("Skipping native PGO for SharpOS target ${TargetName}")
+        endif()
+        return()
+    endif()
+
     if(CLR_CMAKE_PGO_INSTRUMENT)
         if(CLR_CMAKE_HOST_WIN32)
             set_property(TARGET ${TargetName} APPEND_STRING PROPERTY LINK_FLAGS_RELEASE        " /LTCG /GENPROFILE")

@@ -38,7 +38,7 @@ function(generate_data_descriptors)
 
     add_library(${INTERMEDIARY_LIBRARY} OBJECT "${DATA_DESCRIPTOR_SHARED_SOURCE_DIR}/datadescriptor.cpp")
 
-    if(CLR_CMAKE_TARGET_WIN32)
+    if(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
       # turn off whole program optimization:
       # 1. it creates object files that cdac-build-tool can't read
       # 2. we never link INTERMEDIARY_LIBRARY into the final product - it's only job is to be scraped

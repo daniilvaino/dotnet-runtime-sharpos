@@ -1003,7 +1003,16 @@ if (MSVC)
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/Gz>)
   endif (CLR_CMAKE_HOST_ARCH_I386)
 
-  set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+  if (CLR_CMAKE_TARGET_SHARPOS)
+    # SharpOS links CoreCLR static libraries into the NativeAOT-built kernel
+    # with MSVC link.exe. clang-cl ThinLTO emits LLVM bitcode objects that
+    # lld-link can consume, but link.exe reports them as invalid/corrupt.
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO OFF)
+  else()
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+  endif()
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
   set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_CHECKED OFF)
 

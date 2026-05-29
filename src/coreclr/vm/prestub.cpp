@@ -605,6 +605,9 @@ PCODE MethodDesc::JitCompileCode(PrepareCodeConfig* pConfig)
     PCODE pCode = (PCODE)NULL;
     {
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // GetDebugClassName / m_pszDebugMethodName are _DEBUG-only members;
+        // guard so Release builds compile (the name is just diagnostic).
+#ifdef _DEBUG
         {
             const char* cn = GetMethodTable()->GetDebugClassName();
             const char* mn = m_pszDebugMethodName;
@@ -617,6 +620,9 @@ PCODE MethodDesc::JitCompileCode(PrepareCodeConfig* pConfig)
             SharpOSHost_DebugPrint(IsFCall() ? " [FCall]" : "");
             SharpOSHost_DebugPrint("\n");
         }
+#else
+        SharpOSHost_DebugPrint("[prestub] JIT method (name in _DEBUG only)\n");
+#endif
         SharpOSHost_DebugPrint("[prestub] entering JIT-lock scope\n");
 #endif
         // Enter the global lock which protects the list of all functions being JITd
