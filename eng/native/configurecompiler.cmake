@@ -97,6 +97,31 @@ if (MSVC)
     set_property(GLOBAL PROPERTY CLR_CONTROL_FLOW_GUARD ON)
   endif()
 
+  # SharpOS port: cut libcmt.lib dependency by disabling MSVC features
+  # that emit references to CRT-only symbols. We want the kernel to link
+  # without libcmt because there's nothing libcmt provides that we can't
+  # cover ourselves (kernel is a unikernel, no user-mode CRT semantics).
+  #
+  # /GS-                 — disable stack canary; removes references to
+  #                        __security_cookie / __GSHandlerCheck.
+  # /guard:cf- + /GUARD:NO — already implied by CLR_CONTROL_FLOW_GUARD=OFF
+  #                          above for compiler; linker-side /GUARD:NO
+  #                          ensures the import directive isn't emitted.
+  # /Zc:threadSafeInit-  — disable C++11 thread-safe static initialization;
+  #                        removes references to _Init_thread_header/
+  #                        footer/epoch/abort. Single-threaded boot init
+  #                        is fine without thread-safe statics.
+  #
+  # Caveat: floating-point marker _fltused is auto-emitted by cl.exe on
+  # any FP usage and can't be turned off via a flag — needs an ephemeral
+  # .c stub (or [RuntimeExport] data-symbol workaround once that works).
+  # Same for _tls_index / __dyn_tls_* (any TLS usage).
+  if (CLR_CMAKE_TARGET_SHARPOS)
+    add_compile_options(/GS-)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/Zc:threadSafeInit->)
+    add_link_options(/GUARD:NO)
+  endif()
+
   # Remove the /EHsc from the CXX flags so that the compile options are the only source of truth for that
   string(REPLACE "/EHsc" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
   set_property(GLOBAL PROPERTY CLR_EH_OPTION /EHsc)

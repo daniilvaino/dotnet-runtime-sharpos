@@ -1,4 +1,4 @@
-# build_clr_sharpos.ps1
+﻿# build_clr_sharpos.ps1
 #
 # Build CoreCLR fork с TARGET_SHARPOS configuration.
 # Produces coreclr_sharpos_static.lib + dependencies для Phase 6.1
@@ -122,17 +122,61 @@ $MsBuildProps = '/p:NativeAotSupported=false /p:SharpOSBuild=true'
 
 Push-Location $ForkRoot
 try {
-    Write-Host "`nExecuting build.cmd -subset clr -configuration $Configuration -cmakeargs `"$CMakeArgs`" $MsBuildProps`n" -ForegroundColor Cyan
+    $BuildArgs = @(
+        '-subset'
+        'clr'
+        '-configuration'
+        $Configuration
+        '-cmakeargs'
+        $CMakeArgs
+    ) + ($MsBuildProps -split ' ')
 
-    & cmd /c ".\build.cmd -subset clr -configuration $Configuration -cmakeargs `"$CMakeArgs`" $MsBuildProps" 2>&1 |
+    Write-Host "`nExecuting build.cmd $($BuildArgs -join ' ')`n" -ForegroundColor Cyan
+
+    & .\build.cmd @BuildArgs 2>&1 |
         Tee-Object -FilePath $LogFile
 
     $exitCode = $LASTEXITCODE
     if ($exitCode -eq 0) {
         Write-Host "`n=== BUILD SUCCEEDED ===" -ForegroundColor Green
+
+        # step 120: merge libcmt.lib into coreclr_static.lib so kernel link
+        # doesn't need to mention libcmt at all. Архитектурно libcmt — это
+        # MSVC C/C++ runtime для нашего C++ форкна; kernel C# его не трогает.
+        # lib.exe берёт все .obj из обеих библиотек и пакует в одну self-
+        # contained .lib; kernel-side link.exe тащит .obj on-demand как обычно.
+        $StaticLib = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'
+        if (Test-Path $StaticLib) {
+            $pfx86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+            $vsInstaller = Join-Path $pfx86 'Microsoft Visual Studio\Installer\vswhere.exe'
+            if (Test-Path $vsInstaller) {
+                $vsRoot = & $vsInstaller -latest -property installationPath
+                if ($vsRoot) {
+                    $msvcDir = Join-Path $vsRoot 'VC\Tools\MSVC'
+                    $msvcVer = (Get-ChildItem $msvcDir | Sort-Object Name -Descending | Select-Object -First 1).Name
+                    $libExe  = Join-Path $msvcDir (Join-Path $msvcVer 'bin\Hostx64\x64\lib.exe')
+                    $libcmt  = Join-Path $msvcDir (Join-Path $msvcVer 'lib\x64\libcmt.lib')
+                    if ((Test-Path $libExe) -and (Test-Path $libcmt)) {
+                        Write-Host "Merging libcmt.lib into coreclr_static.lib..." -ForegroundColor Cyan
+                        $MergedLib = "$StaticLib.merged.tmp"
+                        & $libExe /NOLOGO "/OUT:$MergedLib" $StaticLib $libcmt 2>&1 | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            Move-Item -Force $MergedLib $StaticLib
+                            Write-Host "  coreclr_static.lib теперь self-contained (libcmt вложен)" -ForegroundColor Green
+                        } else {
+                            Write-Host "  lib.exe merge failed (exit $LASTEXITCODE) — kernel link will still need libcmt" -ForegroundColor Yellow
+                            Remove-Item -Force $MergedLib -ErrorAction SilentlyContinue
+                        }
+                    } else {
+                        Write-Host "lib.exe или libcmt.lib не найдены — kernel link will still need libcmt" -ForegroundColor Yellow
+                    }
+                }
+            }
+        }
+
         $BinDir = Join-Path $ForkRoot ('artifacts/bin/coreclr/windows.x64.' + $Configuration)
         $Outputs = @(
-            @{ Path = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'; Label = 'coreclr_static.lib (kernel image input)' }
+            @{ Path = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'; Label = 'coreclr_static.lib (kernel input, libcmt merged)' }
             @{ Path = Join-Path $BinDir 'coreclr.dll';        Label = 'coreclr.dll (SHARED target)' }
             @{ Path = Join-Path $BinDir 'mscordaccore.dll';   Label = 'mscordaccore.dll (DAC)' }
             @{ Path = Join-Path $ObjDir 'dlls/mscorrc/mscorrc.lib'; Label = 'mscorrc.lib (compiled-in resources)' }
