@@ -595,6 +595,11 @@ void FatalErrorHandler(UINT errorCode, LPCWSTR pszMessage)
     EEPOLICY_HANDLE_FATAL_ERROR_WITH_MESSAGE(errorCode, pszMessage);
 }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugPrintForced(const char* msg);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t v);
+#endif
+
 void EEStartupHelper()
 {
     CONTRACTL
@@ -613,10 +618,19 @@ void EEStartupHelper()
 
     HRESULT hr = S_OK;
     static ConfigDWORD breakOnEELoad;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrintForced("[EEStart] enter\n");
+#endif
     EX_TRY
     {
         g_fEEInit = true;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+#define SOS_CHK(tag) SharpOSHost_DebugPrintForced("[EEStart-chk] " tag "\n")
+#else
+#define SOS_CHK(tag) ((void)0)
+#endif
+        SOS_CHK("01-systeminfo");
 
         // We cache the SystemInfo for anyone to use throughout the life of the EE.
         GetSystemInfo(&g_SystemInfo);
@@ -638,8 +652,10 @@ void EEStartupHelper()
 
         // SString initialization
         // This needs to be done before config because config uses SString::Empty()
+        SOS_CHK("02-sstring");
         SString::Startup();
 
+        SOS_CHK("03-eeconfig-setup");
         IfFailGo(EEConfig::Setup());
 
 
@@ -653,29 +669,41 @@ void EEStartupHelper()
 
         // Initialize global configuration settings based on startup flags
         // This needs to be done before the EE has started
+        SOS_CHK("04-startup-flags");
         InitializeStartupFlags();
 
+        SOS_CHK("05-pending-typeload");
         PendingTypeLoadTable::Init();
 
+        SOS_CHK("06-execalloc-static");
         IfFailGo(ExecutableAllocator::StaticInitialize(FatalErrorHandler));
 
+        SOS_CHK("07-config-sync");
         if (g_pConfig != NULL)
         {
             IfFailGoLog(g_pConfig->sync());
         }
 
+        SOS_CHK("08-thread-static");
         Thread::StaticInitialize();
 
 #if defined(FEATURE_INTERPRETER) && !defined(TARGET_WASM)
         InitCallStubGenerator();
 #endif // FEATURE_INTERPRETER
 
+        SOS_CHK("09-jit-tracking");
         JITInlineTrackingMap::StaticInitialize();
+        SOS_CHK("10-backpatch-tracker");
         MethodDescBackpatchInfoTracker::StaticInitialize();
+        SOS_CHK("11-codeversion");
         CodeVersionManager::StaticInitialize();
+        SOS_CHK("12-tiered");
         TieredCompilationManager::StaticInitialize();
+        SOS_CHK("13-callcounting");
         CallCountingManager::StaticInitialize();
+        SOS_CHK("14-osr");
         OnStackReplacementManager::StaticInitialize();
+        SOS_CHK("15-mdt-cache");
         MethodTable::InitMethodDataCache();
 
 #if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
@@ -691,12 +719,16 @@ void EEStartupHelper()
         }
 #endif // !TARGET_UNIX || TARGET_SHARPOS
 
+        SOS_CHK("16-thread-mgr");
         InitThreadManager();
+        SOS_CHK("17-thread-mgr-done");
         STRESS_LOG0(LF_STARTUP, LL_ALWAYS, "Returned successfully from InitThreadManager");
 
+        SOS_CHK("18-before-eventpipe");
 #ifdef FEATURE_PERFTRACING
         // Initialize the event pipe.
         EventPipeAdapter::Initialize();
+        SOS_CHK("19-eventpipe-done");
 #if defined(TARGET_LINUX)
         InitUserEvents();
 #endif // TARGET_LINUX
@@ -741,6 +773,7 @@ void EEStartupHelper()
         ETWFireEvent(EEStartupStart_V1);
 #endif // FEATURE_EVENT_TRACE
 
+        SOS_CHK("20-gscookie");
         InitGSCookie();
 
 #ifdef LOGGING
@@ -752,6 +785,7 @@ void EEStartupHelper()
 #endif
 
 #ifdef FEATURE_PGO
+        SOS_CHK("21-pgo");
         PgoManager::Initialize();
 #endif
 
@@ -760,9 +794,12 @@ void EEStartupHelper()
 #ifndef TARGET_UNIX
         IfFailGoLog(EnsureRtlFunctions());
 #endif // !TARGET_UNIX
+        SOS_CHK("22-event-store");
         InitEventStore();
 
+        SOS_CHK("23-unwind-info-tbl");
         UnwindInfoTable::Initialize();
+        SOS_CHK("24-unwind-info-done");
 
         // Fire the runtime information ETW event
         ETW::InfoLog::RuntimeInformation(ETW::InfoLog::InfoStructs::Normal);
@@ -796,45 +833,71 @@ void EEStartupHelper()
         }
 #endif // USE_DISASSEMBLER
 
+        SOS_CHK("25-spin-const");
         // Monitors, Crsts, and SimpleRWLocks all use the same spin heuristics
         // Cache the (potentially user-overridden) values now so they are accessible from asm routines
         InitializeSpinConstants();
 
+        SOS_CHK("26-stubmgr-init");
         StubManager::InitializeStubManagers();
 
+        SOS_CHK("27-peimage-startup");
         // Set up the cor handle map. This map is used to load assemblies in
         // memory instead of using the normal system load
         PEImage::Startup();
 
+        SOS_CHK("28-access-check");
         AccessCheckOptions::Startup();
 
+        SOS_CHK("29-corelibbinder-startup");
         CoreLibBinder::Startup();
 
+        SOS_CHK("30-stublinker-cpu");
         StubLinkerCPU::Init();
+        SOS_CHK("31-stubprecode-static");
         StubPrecode::StaticInitialize();
+        SOS_CHK("32-fixupprecode-static");
         FixupPrecode::StaticInitialize();
+        SOS_CHK("33-dac-precodes");
         CDacPlatformMetadata::InitPrecodes();
 
+        SOS_CHK("34-init-gc");
         InitializeGarbageCollector();
+        SOS_CHK("35-init-gc-done");
 
         if (!GCHandleUtilities::GetGCHandleManager()->Initialize())
         {
             IfFailGo(E_OUTOFMEMORY);
         }
+        SOS_CHK("36-gc-handle-mgr");
 
         g_pEEShutDownEvent = new CLREvent();
         g_pEEShutDownEvent->CreateManualEvent(FALSE);
+        SOS_CHK("37-shutdown-event");
 
         VirtualCallStubManager::InitStatic();
+        SOS_CHK("38-vsd-init");
 
         // Setup the domains. Threads are started in a default domain.
 
         // Static initialization
         SystemDomain::Attach();
+        SOS_CHK("39-sysdom-attach");
 
         COMDelegate::Init();
+        SOS_CHK("40-comdelegate");
 
         ExecutionManager::Init();
+        SOS_CHK("41-execmgr-init");
+
+#ifdef FEATURE_PERFMAP
+        SOS_CHK("42-perfmap-signal");
+        PerfMap::SignalDependenciesReady();
+#endif
+
+        SOS_CHK("43-jithost-init");
+        JitHost::Init();
+        SOS_CHK("44-jithost-done");
 
 #ifdef FEATURE_PERFMAP
         PerfMap::SignalDependenciesReady();
@@ -868,32 +931,42 @@ void EEStartupHelper()
 #endif // PROFILING_SUPPORTED
 
 #ifdef TARGET_WINDOWS
+        SOS_CHK("44a-finalizer-create-before");
         // Create the finalizer thread on windows earlier, as we will need to wait for
         // the completion of its initialization part that initializes COM as that has to be done
         // before the first Thread is attached. Thus we want to give the thread a bit more time.
         FinalizerThread::FinalizerThreadCreate();
+        SOS_CHK("44b-finalizer-create-after");
 #endif
 
+        SOS_CHK("45-prestubmgr");
         InitPreStubManager();
 
 #ifdef FEATURE_COMINTEROP
+        SOS_CHK("46-cominterop");
         InitializeComInterop();
 #endif // FEATURE_COMINTEROP
 
+        SOS_CHK("47-stubhelpers");
         StubHelpers::Init();
 
+        SOS_CHK("48-jit-alloc-helpers");
         // Before setting up the execution manager initialize the first part
         // of the JIT helpers.
         InitJITAllocationHelpers();
+        SOS_CHK("49-jit-wb-helpers");
         InitJITWriteBarrierHelpers();
 
+        SOS_CHK("50-syncblock");
         // Set up the sync block
         SyncBlockCache::Start();
 
+        SOS_CHK("51-gcheap-init");
         // This isn't done as part of InitializeGarbageCollector() above because it
         // requires write barriers to have been set up on x86, which happens as part
         // of InitJITWriteBarrierHelpers.
         hr = g_pGCHeap->Initialize();
+        SOS_CHK("52-gcheap-done");
         if (FAILED(hr))
         {
             LogErrorToHost("GC heap initialization failed with error 0x%08X", hr);
@@ -901,8 +974,11 @@ void EEStartupHelper()
 
         IfFailGo(hr);
 
+        SOS_CHK("53-init-eh");
         InitializeExceptionHandling();
+        SOS_CHK("54-init-eh-done");
 
+        SOS_CHK("55-install-uef");
         //
         // Install our global exception filter
         //
@@ -910,6 +986,7 @@ void EEStartupHelper()
         {
             IfFailGo(E_FAIL);
         }
+        SOS_CHK("56-uef-done");
 
 #ifdef TARGET_WINDOWS
         // g_pGCHeap->Initialize() above could take nontrivial time, so by now the finalizer thread
@@ -921,9 +998,11 @@ void EEStartupHelper()
         FinalizerThread::WaitForFinalizerThreadStart();
 #endif
 
+        SOS_CHK("57-setup-thread");
         // throws on error
         _ASSERTE(GetThreadNULLOk() == NULL);
         SetupThread();
+        SOS_CHK("58-setup-thread-done");
 
 #ifdef DEBUGGING_SUPPORTED
         // Notify debugger once the first thread is created to finish initialization.
@@ -938,9 +1017,13 @@ void EEStartupHelper()
         // SharpOS Phase 6.1: no threading yet (per D5), finalizer thread creation
         // deferred to Phase 6.2 after scheduler. EnableFinalization keeps queue alive
         // so finalize semantics exist even if no separate thread.
-#if !defined(TARGET_WINDOWS) && !defined(TARGET_WASM) && !defined(TARGET_SHARPOS)
-        // This isn't done as part of InitializeGarbageCollector() above because
-        // debugger must be initialized before creating EE thread objects
+        SOS_CHK("59-finalizer");
+#if !defined(TARGET_WINDOWS) && !defined(TARGET_WASM)
+        // SharpOS post-E9a: threading is online (project_phase_e9a_landed.md),
+        // so the finalizer thread can be created here like Linux PAL does.
+        // Previously gated off under TARGET_SHARPOS for Phase 6.1 (pre-thread)
+        // — the gate is now stale: EnableFinalization() below dereffed a NULL
+        // hEventFinalizer because FinalizerThreadCreate() never ran.
         FinalizerThread::FinalizerThreadCreate();
 #else
         // On windows the finalizer thread is already partially created and is waiting
@@ -949,15 +1032,19 @@ void EEStartupHelper()
 #endif
 
 #ifdef FEATURE_PERFTRACING
+        SOS_CHK("60-eventpipe-finish");
         // Finish setting up rest of EventPipe - specifically enable SampleProfiler if it was requested at startup.
         // SampleProfiler needs to cooperate with the GC which hasn't fully finished setting up in the first part of the
         // EventPipe initialization, so this is done after the GC has been fully initialized.
         EventPipeAdapter::FinishInitialize();
 #endif // FEATURE_PERFTRACING
+        SOS_CHK("61-genanalysis");
         GenAnalysis::Initialize();
 
+        SOS_CHK("62-gc-full-init");
         // Now we really have fully initialized the garbage collector
         SetGarbageCollectorFullyInitialized();
+        SOS_CHK("63-gc-full-done");
 
 #ifdef DEBUGGING_SUPPORTED
         // Make a call to publish the DefaultDomain for the debugger
@@ -973,9 +1060,11 @@ void EEStartupHelper()
         MethodDesc::Init();
 #endif
 
+        SOS_CHK("64-assembly-init");
         Assembly::Initialize();
-
+        SOS_CHK("65-sysdom-init");
         SystemDomain::System()->Init();
+        SOS_CHK("66-sysdom-init-done");
 
 #ifdef PROFILING_SUPPORTED
         // <TODO>This is to compensate for the DefaultDomain workaround contained in
@@ -1031,10 +1120,20 @@ void EEStartupHelper()
 
 
 ErrExit: ;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrintForced("[EEStart] ErrExit reached hr=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uint32_t)hr);
+        SharpOSHost_DebugPrintForced("\n");
+#endif
     }
     EX_CATCH
     {
         hr = GET_EXCEPTION()->GetHR();
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrintForced("[EEStart] EX_CATCH hr=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uint32_t)hr);
+        SharpOSHost_DebugPrintForced("\n");
+#endif
         RethrowTerminalExceptionsWithInitCheck();
     }
     EX_END_CATCH
@@ -1047,6 +1146,11 @@ ErrExit: ;
             hr = E_FAIL;
 
         g_EEStartupStatus = hr;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrintForced("[EEStart] FAILED final hr=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uint32_t)hr);
+        SharpOSHost_DebugPrintForced("\n");
+#endif
     }
 
     if (breakOnEELoad.val(CLRConfig::UNSUPPORTED_BreakOnEELoad) == 2)

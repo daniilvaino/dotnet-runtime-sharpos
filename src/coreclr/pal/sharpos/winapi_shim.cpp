@@ -82,6 +82,9 @@ extern "C" __attribute__((weak)) void  SharpOSHost_HeapFree(void* /*ptr*/) {}
 extern "C" __attribute__((weak)) void* SharpOSHost_HeapRealloc(void* /*old*/, size_t /*size*/) { return nullptr; }
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) {}
+// Always-on diagnostic — weak fallback for coreclr.dll smoke build target.
+// Real impl in OS/src/PAL/SharpOSHost/Diagnostics.cs (kernel link wins).
+extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintForced(const char* /*msg*/) {}
 // step 71 — weak fallback so coreclr.dll links the [MDLM] probe's ungated
 // sink; the kernel's real (non-Verbose-gated) [RuntimeExport] overrides it
 // at runtime. Reverted with the probe after diagnosis.

@@ -565,7 +565,9 @@ namespace System.Runtime
             internal volatile byte* _handlingFramePC;
 #endif
 
-#if TARGET_UNIX
+// SharpOS fork: REGDISPLAY offsets unified to Windows-shaped layout
+// in AsmOffsets.cs — these Unix-only fields no longer have constants.
+#if false && TARGET_UNIX
             [FieldOffset(AsmOffsets.OFFSETOF__ExInfo__m_pReversePInvokePropagationCallback)]
             internal volatile IntPtr _pReversePInvokePropagationCallback;
 
@@ -854,7 +856,7 @@ namespace System.Runtime
 #if TARGET_ARM64
             exInfo._handlingFramePC = prevOriginalPC;
 #endif
-#if TARGET_UNIX
+#if false && TARGET_UNIX
             exInfo._pReversePInvokePropagationCallback = pReversePInvokePropagationCallback;
             exInfo._pReversePInvokePropagationContext = pReversePInvokePropagationContext;
 #endif // TARGET_UNIX

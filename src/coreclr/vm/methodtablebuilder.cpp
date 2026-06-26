@@ -9573,6 +9573,10 @@ MethodTableBuilder::LoadExactInterfaceMap(MethodTable *pMT)
     // config sets _DEBUG, so available.
     SharpOSHost_DebugPrint("[LoadExactInterfaceMap] pMT=0x");
     SharpOSHost_DebugPrintHex((uint64_t)pMT);
+    SharpOSHost_DebugPrint(" parent=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(pMT ? pMT->GetParentMethodTable() : NULL));
+    SharpOSHost_DebugPrint(" ifaces=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(pMT ? pMT->GetNumInterfaces() : 0));
 #ifdef _DEBUG
     if (pMT && pMT->GetDebugClassName())
     {
@@ -9582,6 +9586,19 @@ MethodTableBuilder::LoadExactInterfaceMap(MethodTable *pMT)
     }
 #endif
     SharpOSHost_DebugPrint("\n");
+    if (pMT)
+    {
+        uint64_t* q = (uint64_t*)pMT;
+        SharpOSHost_DebugPrint("[LoadExactInterfaceMap] raw +80..B8:");
+        for (int i = 0x80 / 8; i <= 0xB8 / 8; i++)
+        {
+            SharpOSHost_DebugPrint(" +0x");
+            SharpOSHost_DebugPrintHex((uint64_t)(i * 8));
+            SharpOSHost_DebugPrint("=0x");
+            SharpOSHost_DebugPrintHex(q[i]);
+        }
+        SharpOSHost_DebugPrint("\n");
+    }
 #endif
 
     BOOL hasInstantiatedInterfaces = FALSE;

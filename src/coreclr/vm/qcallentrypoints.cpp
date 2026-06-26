@@ -482,10 +482,11 @@ static const Entry s_QCall[] =
     DllImportEntry(EventPipeInternal_SignalSession)
     DllImportEntry(EventPipeInternal_WaitForSessionSignal)
 #endif
-// SharpOS port: PAL_CreateMutexW / PAL_OpenMutexW — Linux-PAL stubs из pal.h.
-// На TARGET_SHARPOS skip — kernel mutex реализация через pal/sharpos shim
-// или own sync primitives (D5), эти QCalls не required для managed BCL.
-#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
+// Linux SPC IL marshals Win32-name QCalls (GetEnvironmentVariableW etc.) regardless
+// of host OS. We have stubs for these in pal/sharpos/crt_imp_stubs.cpp, so register
+// them for TARGET_SHARPOS too. PAL_CreateMutexW/PAL_OpenMutexW excluded — no stub yet
+// (mutexes go through our own sync primitives, see kernel docs §D5).
+#if defined(TARGET_UNIX)
     DllImportEntry(CloseHandle)
     DllImportEntry(CreateEventExW)
     DllImportEntry(CreateMutexExW)
@@ -498,8 +499,10 @@ static const Entry s_QCall[] =
     DllImportEntry(OpenMutexW)
     DllImportEntry(OpenSemaphoreW)
     DllImportEntry(OutputDebugStringW)
+#if !defined(TARGET_SHARPOS)
     DllImportEntry(PAL_CreateMutexW)
     DllImportEntry(PAL_OpenMutexW)
+#endif
     DllImportEntry(ReleaseMutex)
     DllImportEntry(ReleaseSemaphore)
     DllImportEntry(ResetEvent)

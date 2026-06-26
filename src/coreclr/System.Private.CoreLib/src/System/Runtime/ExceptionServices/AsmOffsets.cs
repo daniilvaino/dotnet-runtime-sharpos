@@ -15,7 +15,10 @@ class AsmOffsets
 #if DEBUG
     // Debug build offsets
 #if TARGET_AMD64
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int SIZEOF__REGDISPLAY = 0x1b90;
     public const int OFFSETOF__REGDISPLAY__SP = 0x1b78;
     public const int OFFSETOF__REGDISPLAY__ControlPC = 0x1b80;
@@ -25,7 +28,10 @@ class AsmOffsets
     public const int OFFSETOF__REGDISPLAY__ControlPC = 0xbe0;
 #endif // TARGET_UNIX
 #elif TARGET_ARM64
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int SIZEOF__REGDISPLAY = 0x9e0;
     public const int OFFSETOF__REGDISPLAY__SP = 0x938;
     public const int OFFSETOF__REGDISPLAY__ControlPC = 0x940;
@@ -62,8 +68,11 @@ class AsmOffsets
     public const int SIZEOF__StackFrameIterator = 0x170;
     public const int OFFSETOF__StackFrameIterator__m_AdjustedControlPC = 0x168;
 #else
-    public const int SIZEOF__StackFrameIterator = 0x150;
-    public const int OFFSETOF__StackFrameIterator__m_AdjustedControlPC = 0x148;
+    // SharpOS fork: confirmed at runtime that C++ sizeof(StackFrameIterator)=0x148
+    // (not 0x150 as in upstream). Layout mismatch in upstream's no-interp amd64
+    // branch — one 8-byte field is missing in our C++ build. Aligning to C++.
+    public const int SIZEOF__StackFrameIterator = 0x148;
+    public const int OFFSETOF__StackFrameIterator__m_AdjustedControlPC = 0x140;
 #endif
     public const int OFFSETOF__StackFrameIterator__m_isRuntimeWrappedExceptions = 0x132;
 #elif TARGET_X86
@@ -86,7 +95,10 @@ class AsmOffsets
 #else // DEBUG
     // Release build offsets
 #if TARGET_AMD64
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int SIZEOF__REGDISPLAY = 0x1b80;
     public const int OFFSETOF__REGDISPLAY__SP = 0x1b70;
     public const int OFFSETOF__REGDISPLAY__ControlPC = 0x1b78;
@@ -96,7 +108,10 @@ class AsmOffsets
     public const int OFFSETOF__REGDISPLAY__ControlPC = 0xbd8;
 #endif // TARGET_UNIX
 #elif TARGET_ARM64
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int SIZEOF__REGDISPLAY = 0x9d0;
     public const int OFFSETOF__REGDISPLAY__SP = 0x930;
     public const int OFFSETOF__REGDISPLAY__ControlPC = 0x938;
@@ -157,13 +172,19 @@ class AsmOffsets
 #endif // DEBUG
 
 #if TARGET_AMD64
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int SIZEOF__PAL_LIMITED_CONTEXT = 0xca0;
 #else // TARGET_UNIX
     public const int SIZEOF__PAL_LIMITED_CONTEXT = 0x4d0;
 #endif // TARGET_UNIX
 #elif TARGET_ARM64
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int SIZEOF__PAL_LIMITED_CONTEXT = 0x3e0;
 #else // TARGET_UNIX
     public const int SIZEOF__PAL_LIMITED_CONTEXT = 0x390;
@@ -224,7 +245,10 @@ class AsmOffsets
     public const int OFFSETOF__ExInfo__m_handlingFramePC = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x58;
 #endif
 
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
 #if TARGET_ARM64
     public const int OFFSETOF__ExInfo__m_pReversePInvokePropagationCallback = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x68;
     public const int OFFSETOF__ExInfo__m_pReversePInvokePropagationContext = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x70;
@@ -248,7 +272,10 @@ class AsmOffsets
     public const int OFFSETOF__ExInfo__m_pCatchHandler = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x2c;
     public const int OFFSETOF__ExInfo__m_handlingFrameSP = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x30;
 
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     public const int OFFSETOF__ExInfo__m_pReversePInvokePropagationCallback = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x38;
     public const int OFFSETOF__ExInfo__m_pReversePInvokePropagationContext = OFFSETOF__ExInfo__m_frameIter + SIZEOF__StackFrameIterator + 0x3c;
 #endif
@@ -299,7 +326,10 @@ class AsmOffsets
     static_assert_no_msg(offsetof(ExInfo, m_handlingFramePC) == OFFSETOF__ExInfo__m_handlingFramePC);
 #endif
 
-#if TARGET_UNIX && !TARGET_SHARPOS
+// SharpOS fork: SPC IL is cross-built with -os linux so TARGET_UNIX is set,
+// but our C++ vm/ links the Windows-shaped REGDISPLAY (host fork is Windows).
+// Hard-disable the Unix branch — we always want the Windows layout for amd64.
+#if false && TARGET_UNIX && !TARGET_SHARPOS
     static_assert_no_msg(offsetof(ExInfo, m_propagateExceptionCallback) == OFFSETOF__ExInfo__m_pReversePInvokePropagationCallback);
     static_assert_no_msg(offsetof(ExInfo, m_propagateExceptionContext) == OFFSETOF__ExInfo__m_pReversePInvokePropagationContext);
 #endif

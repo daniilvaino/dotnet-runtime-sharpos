@@ -28,7 +28,18 @@
 param(
     [switch]$Clean,
     [switch]$NinjaClean,
-    [string]$Configuration = 'Debug'
+    [string]$Configuration = 'Debug',
+    # SharpOS kernel needs BOTH:
+    #   - Windows-host fork artifacts: windows.x64.$Configuration/coreclr_static.lib
+    #     statically linked into BOOTX64.EFI by NativeAOT.
+    #   - Linux SPC IL: linux.x64.$Configuration/IL/System.Private.CoreLib.dll
+    #     dropped into ESP /sharpos/ at run_build.ps1 stage; loaded at runtime
+    #     by CoreCLR-hosted runner. MUST match $Configuration to keep
+    #     MethodTable struct layout consistent (AuxiliaryDataOffset shifts on
+    #     m_szDebugClassName, see RuntimeHelpers.CoreCLR.cs:800-818).
+    # SkipLinuxIL=true keeps the old behavior (only Windows build) when the
+    # Linux IL artifact is already up to date.
+    [switch]$SkipLinuxIL
 )
 
 $ErrorActionPreference = 'Stop'
@@ -122,6 +133,38 @@ $MsBuildProps = '/p:NativeAotSupported=false /p:SharpOSBuild=true'
 
 Push-Location $ForkRoot
 try {
+    # ─── Step 1: Linux SPC IL (cross-target) ────────────────────────────────
+    # build.cmd accepts -os linux; it cross-builds the managed CoreLib
+    # without touching native bits. Quick (~1 min) — IL only changes when
+    # SPC sources change. Skip for incremental fork work via -SkipLinuxIL.
+    $LinuxIL = Join-Path $ForkRoot ("artifacts/bin/coreclr/linux.x64.$Configuration/IL/System.Private.CoreLib.dll")
+    if (-not $SkipLinuxIL) {
+        $LinuxArgs = @(
+            '-subset'
+            'clr.corelib'
+            '-configuration'
+            $Configuration
+            '-os'
+            'linux'
+        ) + ($MsBuildProps -split ' ')
+        Write-Host "`nStep 1/2: Linux SPC IL (cross) — build.cmd $($LinuxArgs -join ' ')`n" -ForegroundColor Cyan
+        & .\build.cmd @LinuxArgs 2>&1 | Tee-Object -FilePath ($LogFile + '.linux')
+        if ($LASTEXITCODE -ne 0) {
+            throw "Linux SPC IL build failed (exit $LASTEXITCODE). See $LogFile.linux"
+        }
+        if (-not (Test-Path -LiteralPath $LinuxIL)) {
+            throw "Linux SPC IL not produced at $LinuxIL"
+        }
+        Write-Host "Linux SPC IL ready: $LinuxIL" -ForegroundColor Green
+    } else {
+        if (-not (Test-Path -LiteralPath $LinuxIL)) {
+            Write-Warning "SkipLinuxIL=true but $LinuxIL is missing — kernel will fail to load SPC"
+        } else {
+            Write-Host "Linux SPC IL reused (SkipLinuxIL): $LinuxIL" -ForegroundColor DarkGray
+        }
+    }
+
+    # ─── Step 2: Windows host fork (TARGET_SHARPOS) ─────────────────────────
     $BuildArgs = @(
         '-subset'
         'clr'
@@ -131,7 +174,7 @@ try {
         $CMakeArgs
     ) + ($MsBuildProps -split ' ')
 
-    Write-Host "`nExecuting build.cmd $($BuildArgs -join ' ')`n" -ForegroundColor Cyan
+    Write-Host "`nStep 2/2: Windows fork — build.cmd $($BuildArgs -join ' ')`n" -ForegroundColor Cyan
 
     & .\build.cmd @BuildArgs 2>&1 |
         Tee-Object -FilePath $LogFile

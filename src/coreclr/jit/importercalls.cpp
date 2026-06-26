@@ -3,6 +3,23 @@
 
 #include "jitpch.h"
 
+#if defined(TARGET_SHARPOS)
+extern "C" void SharpOSHost_DebugPrint(const char*);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
+
+static void SharpOS_JitPrintCreateSpanFallback(const char* reason, uint64_t targetAbi, const char* runtimeHandleUnderlying)
+{
+    SharpOSHost_DebugPrint("[JIT CreateSpan] fallback reason=");
+    SharpOSHost_DebugPrint(reason);
+    SharpOSHost_DebugPrint(" targetAbi=0x");
+    SharpOSHost_DebugPrintHex(targetAbi);
+    SharpOSHost_DebugPrint(" runtimeHandleUnderlying=");
+    SharpOSHost_DebugPrint(runtimeHandleUnderlying);
+    SharpOSHost_DebugPrint("\n");
+}
+
+#endif
+
 //------------------------------------------------------------------------
 // impImportCall: import a call-inspiring opcode
 //
@@ -204,6 +221,30 @@ var_types Compiler::impImportCall(OPCODE                  opcode,
 #endif // DEBUG
 
         const bool isIntrinsic = (mflags & CORINFO_FLG_INTRINSIC) != 0;
+
+#if defined(TARGET_SHARPOS)
+        {
+            const char* sharpOSNamespaceName = nullptr;
+            const char* sharpOSClassName     = nullptr;
+            const char* sharpOSMethodName =
+                info.compCompHnd->getMethodNameFromMetadata(methHnd, &sharpOSClassName, &sharpOSNamespaceName, nullptr, 0);
+
+            if ((sharpOSNamespaceName != nullptr) && (sharpOSClassName != nullptr) && (sharpOSMethodName != nullptr) &&
+                (strcmp(sharpOSNamespaceName, "System.Runtime.CompilerServices") == 0) &&
+                (strcmp(sharpOSClassName, "RuntimeHelpers") == 0) && (strcmp(sharpOSMethodName, "CreateSpan") == 0))
+            {
+                SharpOSHost_DebugPrint("[JIT call] RuntimeHelpers.CreateSpan mflags=0x");
+                SharpOSHost_DebugPrintHex((uint64_t)mflags);
+                SharpOSHost_DebugPrint(" isIntrinsic=");
+                SharpOSHost_DebugPrint(isIntrinsic ? "1" : "0");
+                SharpOSHost_DebugPrint(" compMatchedVM=");
+                SharpOSHost_DebugPrint(info.compMatchedVM ? "1" : "0");
+                SharpOSHost_DebugPrint(" targetAbi=0x");
+                SharpOSHost_DebugPrintHex((uint64_t)eeGetEEInfo()->targetAbi);
+                SharpOSHost_DebugPrint("\n");
+            }
+        }
+#endif
 
         // <NICE> Factor this into getCallInfo </NICE>
         bool isSpecialIntrinsic = false;
@@ -2930,6 +2971,16 @@ GenTree* Compiler::impCreateSpanIntrinsic(CORINFO_SIG_INFO* sig)
     assert(sig->numArgs == 1);
     assert(sig->sigInst.methInstCount == 1);
 
+#if defined(TARGET_SHARPOS)
+    uint64_t sharpOSCreateSpanTargetAbi = (uint64_t)eeGetEEInfo()->targetAbi;
+    const char* sharpOSCreateSpanUnderlying = GetRuntimeHandleUnderlyingType() == TYP_REF ? "REF" : "I_IMPL";
+    SharpOSHost_DebugPrint("[JIT CreateSpan] enter targetAbi=0x");
+    SharpOSHost_DebugPrintHex(sharpOSCreateSpanTargetAbi);
+    SharpOSHost_DebugPrint(" runtimeHandleUnderlying=");
+    SharpOSHost_DebugPrint(sharpOSCreateSpanUnderlying);
+    SharpOSHost_DebugPrint("\n");
+#endif
+
     GenTree* fieldTokenNode = impStackTop(0).val;
 
     //
@@ -2943,6 +2994,9 @@ GenTree* Compiler::impCreateSpanIntrinsic(CORINFO_SIG_INFO* sig)
     if (!fieldTokenNode->OperIs(GT_CALL) ||
         !fieldTokenNode->AsCall()->IsHelperCall(eeFindHelper(CORINFO_HELP_FIELDDESC_TO_STUBRUNTIMEFIELD)))
     {
+#if defined(TARGET_SHARPOS)
+        SharpOS_JitPrintCreateSpanFallback("arg-not-fielddesc-helper", sharpOSCreateSpanTargetAbi, sharpOSCreateSpanUnderlying);
+#endif
         return nullptr;
     }
 
@@ -2956,12 +3010,18 @@ GenTree* Compiler::impCreateSpanIntrinsic(CORINFO_SIG_INFO* sig)
     // Check for constant
     if (!fieldTokenNode->OperIs(GT_CNS_INT))
     {
+#if defined(TARGET_SHARPOS)
+        SharpOS_JitPrintCreateSpanFallback("field-token-not-const", sharpOSCreateSpanTargetAbi, sharpOSCreateSpanUnderlying);
+#endif
         return nullptr;
     }
 
     CORINFO_FIELD_HANDLE fieldToken = (CORINFO_FIELD_HANDLE)fieldTokenNode->AsIntCon()->gtCompileTimeHandle;
     if (!fieldTokenNode->IsIconHandle(GTF_ICON_FIELD_HDL) || (fieldToken == nullptr))
     {
+#if defined(TARGET_SHARPOS)
+        SharpOS_JitPrintCreateSpanFallback("field-token-not-field-handle", sharpOSCreateSpanTargetAbi, sharpOSCreateSpanUnderlying);
+#endif
         return nullptr;
     }
 
@@ -2984,6 +3044,9 @@ GenTree* Compiler::impCreateSpanIntrinsic(CORINFO_SIG_INFO* sig)
     CORINFO_CLASS_HANDLE targetElemHnd = sig->sigInst.methInst[0];
     if (info.compCompHnd->getTypeForPrimitiveValueClass(targetElemHnd) == CORINFO_TYPE_UNDEF)
     {
+#if defined(TARGET_SHARPOS)
+        SharpOS_JitPrintCreateSpanFallback("target-not-primitive", sharpOSCreateSpanTargetAbi, sharpOSCreateSpanUnderlying);
+#endif
         return nullptr;
     }
 
@@ -2993,18 +3056,34 @@ GenTree* Compiler::impCreateSpanIntrinsic(CORINFO_SIG_INFO* sig)
     const unsigned count = totalFieldSize / targetElemSize;
     if (count == 0)
     {
+#if defined(TARGET_SHARPOS)
+        SharpOS_JitPrintCreateSpanFallback("zero-count", sharpOSCreateSpanTargetAbi, sharpOSCreateSpanUnderlying);
+#endif
         return nullptr;
     }
 
     void* data = info.compCompHnd->getArrayInitializationData(fieldToken, totalFieldSize);
     if (!data)
     {
+#if defined(TARGET_SHARPOS)
+        SharpOS_JitPrintCreateSpanFallback("no-init-data", sharpOSCreateSpanTargetAbi, sharpOSCreateSpanUnderlying);
+#endif
         return nullptr;
     }
 
     //
     // Ready to commit to the work
     //
+
+#if defined(TARGET_SHARPOS)
+    SharpOSHost_DebugPrint("[JIT CreateSpan] expanded field=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)fieldToken);
+    SharpOSHost_DebugPrint(" data=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)data);
+    SharpOSHost_DebugPrint(" count=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)count);
+    SharpOSHost_DebugPrint("\n");
+#endif
 
     impPopStack();
 
@@ -3097,6 +3176,21 @@ GenTree* Compiler::impIntrinsic(CORINFO_CLASS_HANDLE    clsHnd,
     int        memberRef   = pResolvedToken->token;
 
     NamedIntrinsic ni = lookupNamedIntrinsic(method);
+
+#if defined(TARGET_SHARPOS)
+    if (ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_CreateSpan)
+    {
+        SharpOSHost_DebugPrint("[JIT intrinsic] RuntimeHelpers.CreateSpan lookup hit methodFlags=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)methodFlags);
+        SharpOSHost_DebugPrint(" isIntrinsic=");
+        SharpOSHost_DebugPrint(isIntrinsic ? "1" : "0");
+        SharpOSHost_DebugPrint(" mustExpand-pre=");
+        SharpOSHost_DebugPrint(mustExpand ? "1" : "0");
+        SharpOSHost_DebugPrint(" targetAbi=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)eeGetEEInfo()->targetAbi);
+        SharpOSHost_DebugPrint("\n");
+    }
+#endif
 
     if (isIntrinsic)
     {
@@ -3468,6 +3562,29 @@ GenTree* Compiler::impIntrinsic(CORINFO_CLASS_HANDLE    clsHnd,
         }
     }
 
+#if defined(TARGET_SHARPOS)
+    if ((ni == NI_System_Runtime_CompilerServices_RuntimeHelpers_CreateSpan) ||
+        (ni == NI_System_Type_GetTypeFromHandle) ||
+        (ni == NI_System_Type_get_IsValueType) ||
+        (ni == NI_System_Type_get_IsPrimitive) ||
+        (ni == NI_System_Type_get_IsEnum) ||
+        (ni == NI_System_Type_get_IsByRefLike) ||
+        (ni == NI_System_Type_get_IsGenericType) ||
+        (ni == NI_System_RuntimeTypeHandle_ToIntPtr))
+    {
+        betterToExpand = true;
+        SharpOSHost_DebugPrint("[JIT intrinsic] SharpOS policy ni=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)ni);
+        SharpOSHost_DebugPrint(" mustExpand=");
+        SharpOSHost_DebugPrint(mustExpand ? "1" : "0");
+        SharpOSHost_DebugPrint(" betterToExpand=1 optDisabled=");
+        SharpOSHost_DebugPrint(opts.OptimizationDisabled() ? "1" : "0");
+        SharpOSHost_DebugPrint(" tier0Opt=");
+        SharpOSHost_DebugPrint(opts.Tier0OptimizationEnabled() ? "1" : "0");
+        SharpOSHost_DebugPrint("\n");
+    }
+#endif
+
     GenTree* retNode = nullptr;
 
     // Under debug and minopts, only expand what is required.
@@ -3585,6 +3702,11 @@ GenTree* Compiler::impIntrinsic(CORINFO_CLASS_HANDLE    clsHnd,
 
             case NI_System_Runtime_CompilerServices_RuntimeHelpers_CreateSpan:
             {
+#if defined(TARGET_SHARPOS)
+                SharpOSHost_DebugPrint("[JIT intrinsic] RuntimeHelpers.CreateSpan switch mustExpand=");
+                SharpOSHost_DebugPrint(mustExpand ? "1" : "0");
+                SharpOSHost_DebugPrint("\n");
+#endif
                 retNode = impCreateSpanIntrinsic(sig);
                 break;
             }

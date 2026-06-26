@@ -47,6 +47,54 @@ extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
 #include "gdbjit.h"
 #endif // FEATURE_GDBJIT
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+static void SharpOS_DumpPrestubMethod(const char* tag, MethodDesc* pMD, PCODE code = (PCODE)NULL)
+{
+    SharpOSHost_DebugPrint(tag);
+    SharpOSHost_DebugPrint(" md=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(void*)pMD);
+
+    if (pMD != NULL)
+    {
+        MethodTable* pMT = pMD->GetMethodTable();
+
+        SharpOSHost_DebugPrint(" token=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)pMD->GetMemberDef());
+        SharpOSHost_DebugPrint(" mt=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(void*)pMT);
+        SharpOSHost_DebugPrint(" module=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(void*)pMD->GetModule());
+
+        const char* methodName = pMD->GetName();
+        SharpOSHost_DebugPrint(" name=");
+#ifdef _DEBUG
+        const char* className = pMT != NULL ? pMT->GetDebugClassName() : NULL;
+        SharpOSHost_DebugPrint(className != NULL ? className : "<null>");
+#else
+        SharpOSHost_DebugPrint("<release>");
+#endif
+        SharpOSHost_DebugPrint("::");
+        SharpOSHost_DebugPrint(methodName != NULL ? methodName : "<null>");
+
+        SharpOSHost_DebugPrint(" flags=");
+        SharpOSHost_DebugPrint(pMD->IsIL() ? " IL" : "");
+        SharpOSHost_DebugPrint(pMD->IsNoMetadata() ? " NoMetadata" : "");
+        SharpOSHost_DebugPrint(pMD->IsDynamicMethod() ? " Dynamic" : "");
+        SharpOSHost_DebugPrint(pMD->IsILStub() ? " ILStub" : "");
+        SharpOSHost_DebugPrint(pMD->IsFCall() ? " FCall" : "");
+        SharpOSHost_DebugPrint(pMD->IsPInvoke() ? " PInvoke" : "");
+    }
+
+    if (code != (PCODE)NULL)
+    {
+        SharpOSHost_DebugPrint(" code=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)code);
+    }
+
+    SharpOSHost_DebugPrint("\n");
+}
+#endif
+
 #ifndef DACCESS_COMPILE
 
 EXTERN_C void STDCALL ThePreStubPatch();
@@ -302,9 +350,16 @@ void DACNotifyCompilationFinished(MethodDesc *methodDesc, PCODE pCode)
 PCODE MethodDesc::PrepareInitialCode(CallerGCMode callerGCMode)
 {
     STANDARD_VM_CONTRACT;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_DumpPrestubMethod("[PIC] enter", this);
+#endif
     PrepareCodeConfig config(NativeCodeVersion(this), TRUE, TRUE);
     config.SetCallerGCMode(callerGCMode);
-    return PrepareCode(&config);
+    PCODE pCode = PrepareCode(&config);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_DumpPrestubMethod("[PIC] return", this, pCode);
+#endif
+    return pCode;
 }
 
 PCODE MethodDesc::PrepareCode(PrepareCodeConfig* pConfig)
@@ -429,6 +484,7 @@ PCODE MethodDesc::PrepareILBasedCode(PrepareCodeConfig* pConfig)
         pCode = JitCompileCode(pConfig);
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
         SharpOSHost_DebugPrint("[PIBC] JitCompileCode returned\n");
+        SharpOS_DumpPrestubMethod("[PIBC] jit-code", this, pCode);
 #endif
     }
     else
@@ -438,6 +494,7 @@ PCODE MethodDesc::PrepareILBasedCode(PrepareCodeConfig* pConfig)
 
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
     SharpOSHost_DebugPrint("[PIBC] returning pCode\n");
+    SharpOS_DumpPrestubMethod("[PIBC] return", this, pCode);
 #endif
     return pCode;
 }
@@ -2238,6 +2295,15 @@ PCODE MethodDesc::DoPrestub(MethodTable *pDispatchingMT, CallerGCMode callerGCMo
 
     MethodTable *pMT = GetMethodTable();
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_DumpPrestubMethod("[DoPrestub] enter", this);
+    SharpOSHost_DebugPrint("[DoPrestub] dispatchMT=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(void*)pDispatchingMT);
+    SharpOSHost_DebugPrint(" methodMT=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(void*)pMT);
+    SharpOSHost_DebugPrint("\n");
+#endif
+
     if (ContainsGenericVariables())
     {
         COMPlusThrow(kInvalidOperationException, IDS_EE_CODEEXECUTION_CONTAINSGENERICVAR);
@@ -2330,6 +2396,12 @@ PCODE MethodDesc::DoPrestub(MethodTable *pDispatchingMT, CallerGCMode callerGCMo
         pCode = GetCodeVersionManager()->PublishVersionableCodeIfNecessary(this, callerGCMode, &doBackpatch, &doFullBackpatch);
 #if defined(TARGET_SHARPOS)
         SharpOSHost_DebugPrint("[DoPrestub] PublishVersionableCode returned\n");
+        SharpOS_DumpPrestubMethod("[DoPrestub] versionable-code", this, pCode);
+        SharpOSHost_DebugPrint("[DoPrestub] doBackpatch=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)doBackpatch);
+        SharpOSHost_DebugPrint(" doFullBackpatch=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)doFullBackpatch);
+        SharpOSHost_DebugPrint("\n");
 #endif
 
         if (doBackpatch)
@@ -2340,6 +2412,7 @@ PCODE MethodDesc::DoPrestub(MethodTable *pDispatchingMT, CallerGCMode callerGCMo
             pCode = DoBackpatch(pMT, pDispatchingMT, doFullBackpatch);
 #if defined(TARGET_SHARPOS)
             SharpOSHost_DebugPrint("[DoPrestub] DoBackpatch returned (versionable)\n");
+            SharpOS_DumpPrestubMethod("[DoPrestub] versionable-backpatch", this, pCode);
 #endif
         }
         else
@@ -2379,6 +2452,9 @@ PCODE MethodDesc::DoPrestub(MethodTable *pDispatchingMT, CallerGCMode callerGCMo
             GetOrCreatePrecode();
         }
         pCode = PrepareInitialCode(callerGCMode);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_DumpPrestubMethod("[DoPrestub] initial-code", this, pCode);
+#endif
     } // end else if (IsIL() || IsNoMetadata())
     else if (IsPInvoke())
     {
@@ -2478,6 +2554,9 @@ PCODE MethodDesc::DoPrestub(MethodTable *pDispatchingMT, CallerGCMode callerGCMo
 
 
     pCode = DoBackpatch(pMT, pDispatchingMT, FALSE);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_DumpPrestubMethod("[DoPrestub] post-backpatch", this, pCode);
+#endif
 
 Return:
 #if defined(FEATURE_INTERPRETER) && defined(FEATURE_JIT)
@@ -2490,6 +2569,7 @@ Return:
 
 #if defined(TARGET_SHARPOS)
     SharpOSHost_DebugPrint("[DoPrestub] returning pCode\n");
+    SharpOS_DumpPrestubMethod("[DoPrestub] return", this, pCode);
 #endif
     RETURN pCode;
 }
@@ -3630,6 +3710,21 @@ extern "C" SIZE_T STDCALL DynamicHelperWorker(TransitionBlock * pTransitionBlock
         pHelper = DynamicHelperFixup(pTransitionBlock, pCell, sectionIndex, pModule, &kind, &th, &pMD, &pFD);
     }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[DHW] cell=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(void*)pCell);
+    SharpOSHost_DebugPrint(" section=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)sectionIndex);
+    SharpOSHost_DebugPrint(" kind=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)kind);
+    SharpOSHost_DebugPrint(" pHelper=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pHelper);
+    if (pMD != NULL)
+        SharpOS_DumpPrestubMethod(" md", pMD);
+    else
+        SharpOSHost_DebugPrint(" md=null\n");
+#endif
+
     if (pHelper == (PCODE)NULL)
     {
         TADDR pArgument = GetFirstArgumentRegisterValuePtr(pTransitionBlock);
@@ -3702,6 +3797,15 @@ extern "C" SIZE_T STDCALL DynamicHelperWorker(TransitionBlock * pTransitionBlock
 
     if (pHelper == (PCODE)NULL)
         *(SIZE_T *)((TADDR)pTransitionBlock + TransitionBlock::GetOffsetOfArgumentRegisters()) = result;
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrint("[DHW] return pHelper=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)pHelper);
+    SharpOSHost_DebugPrint(" result=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)result);
+    SharpOSHost_DebugPrint("\n");
+#endif
+
     return pHelper;
 }
 

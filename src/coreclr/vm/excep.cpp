@@ -7,6 +7,16 @@
 
 #include "common.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
+static void SharpOS_EH_Write(const char* s)
+{
+    int n = 0;
+    while (s[n] != 0) n++;
+    SharpOSHost_DebugWrite((const uint8_t*)s, n);
+}
+#endif
+
 #include "frames.h"
 #include "threads.h"
 #include "excep.h"
@@ -65,6 +75,32 @@ static inline void sharpos_print_utf16(const wchar_t* s)
         buf[0] = (c >= 0x20 && c < 0x7F) ? (char)c : '?';
         SharpOSHost_DebugPrint(buf);
     }
+}
+
+static inline void sharpos_print_throw_hr(const char* tag, HRESULT hr, UINT resID = 0,
+                                          LPCWSTR arg1 = nullptr, LPCWSTR arg2 = nullptr)
+{
+    SharpOSHost_DebugPrint("[throw-hr] ");
+    SharpOSHost_DebugPrint(tag);
+    SharpOSHost_DebugPrint(" hr=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(uint32_t)hr);
+    SharpOSHost_DebugPrint(" resID=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)resID);
+    SharpOSHost_DebugPrint(" caller=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)_ReturnAddress());
+    if (arg1 != nullptr)
+    {
+        SharpOSHost_DebugPrint(" arg1='");
+        sharpos_print_utf16(arg1);
+        SharpOSHost_DebugPrint("'");
+    }
+    if (arg2 != nullptr)
+    {
+        SharpOSHost_DebugPrint(" arg2='");
+        sharpos_print_utf16(arg2);
+        SharpOSHost_DebugPrint("'");
+    }
+    SharpOSHost_DebugPrint("\n");
 }
 #endif // TARGET_SHARPOS
 #ifndef TARGET_UNIX
@@ -2480,6 +2516,13 @@ VOID DECLSPEC_NORETURN RealCOMPlusThrow(OBJECTREF throwable, BOOL rethrow)
 
     LOG((LF_EH, LL_INFO100, "RealCOMPlusThrow throwing %s\n",
         throwable->GetMethodTable()->GetDebugClassName()));
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_EH_Write("[THROW] RealCOMPlusThrow ");
+    DefineFullyQualifiedNameForClassOnStack();
+    SharpOS_EH_Write(GetFullyQualifiedNameForClass(throwable->GetMethodTable()));
+    SharpOS_EH_Write("\n");
+#endif
 
     GCPROTECT_BEGIN(throwable);
 
@@ -10842,10 +10885,16 @@ VOID DECLSPEC_NORETURN RealCOMPlusThrowHR(HRESULT hr, IErrorInfo* pErrInfo, Exce
 
     if (pInnerException == NULL)
     {
+#if defined(TARGET_SHARPOS)
+        sharpos_print_throw_hr("RealCOMPlusThrowHR(err)", hr);
+#endif
         EX_THROW(EEMessageException, (hr));
     }
     else
     {
+#if defined(TARGET_SHARPOS)
+        sharpos_print_throw_hr("RealCOMPlusThrowHR(err,inner)", hr);
+#endif
         EX_THROW_WITH_INNER(EEMessageException, (hr), pInnerException);
     }
 }
@@ -10867,6 +10916,10 @@ VOID DECLSPEC_NORETURN RealCOMPlusThrowHR(HRESULT hr)
     // ! If you actually want to pull IErrorInfo off the TLS, call
     // !
     // ! COMPlusThrowHR(hr, kGetErrorInfo)
+
+#if defined(TARGET_SHARPOS)
+    sharpos_print_throw_hr("RealCOMPlusThrowHR", hr);
+#endif
 
     EX_THROW(EEMessageException, (hr));
 }
@@ -10901,6 +10954,10 @@ VOID DECLSPEC_NORETURN RealCOMPlusThrowHR(HRESULT hr)
     }
     CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS)
+    sharpos_print_throw_hr("RealCOMPlusThrowHR", hr);
+#endif
+
     EX_THROW(EEMessageException, (hr));
 }
 #endif // FEATURE_COMINTEROP
@@ -10930,6 +10987,10 @@ VOID DECLSPEC_NORETURN RealCOMPlusThrowHR(HRESULT hr, UINT resID, LPCWSTR wszArg
 
     //_ASSERTE((hr != COR_E_EXECUTIONENGINE) ||
     //         !"ExecutionEngineException shouldn't be thrown. Use EEPolicy to failfast or a better exception. The caller of this function should modify their code.");
+
+#if defined(TARGET_SHARPOS)
+    sharpos_print_throw_hr("RealCOMPlusThrowHR(res)", hr, resID, wszArg1, wszArg2);
+#endif
 
     EX_THROW(EEMessageException,
         (hr, resID, wszArg1, wszArg2, wszArg3, wszArg4, wszArg5, wszArg6));

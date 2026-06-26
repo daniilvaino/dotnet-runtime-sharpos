@@ -42,6 +42,14 @@
 #include <formattype.h>
 #include "../md/compiler/custattr.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// SharpOS: forced-print (bypasses kernel Verbose flag) used at QCALL resolve site
+// when binding fails. Symbol provided by OS/src/PAL/SharpOSHost/Diagnostics.cs.
+// Memory: extern "C" must be file scope only — declaring inside the function body
+// breaks the build (was already broken 3 times historically).
+extern "C" void SharpOSHost_DebugPrintForced(const char* msg);
+#endif
+
 #ifdef FEATURE_COMINTEROP
 #include "runtimecallablewrapper.h"
 #include "clrtocomcall.h"
@@ -5496,6 +5504,26 @@ namespace
         if (pMD->IsQCall())
         {
             void* pvTarget = (void*)QCallResolveDllImport(pMD->GetEntrypointName());
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            // Forced print (bypasses Verbose flag) so the missing-QCALL surface
+            // shows even with silent kernel — symmetric to GetProcAddress unknown.
+            // SharpOSHost_DebugPrintForced declared at file scope above (memory:
+            // extern "C" must be file scope only, never inside a function/block).
+            // Debug-class/method names only exist under _DEBUG — Release skips them.
+            if (pvTarget == nullptr)
+            {
+                SharpOSHost_DebugPrintForced("[QCALL unregistered] ");
+                SharpOSHost_DebugPrintForced(pMD->GetEntrypointName() ? pMD->GetEntrypointName() : "?");
+#ifdef _DEBUG
+                SharpOSHost_DebugPrintForced(" (");
+                SharpOSHost_DebugPrintForced(pMD->m_pszDebugClassName ? pMD->m_pszDebugClassName : "?");
+                SharpOSHost_DebugPrintForced("::");
+                SharpOSHost_DebugPrintForced(pMD->m_pszDebugMethodName ? pMD->m_pszDebugMethodName : "?");
+                SharpOSHost_DebugPrintForced(")");
+#endif
+                SharpOSHost_DebugPrintForced("\n");
+            }
+#endif
 #ifdef _DEBUG
             CONSISTENCY_CHECK_MSGF(pvTarget != nullptr,
                 ("%s::%s is not registered using DllImportEntry macro in qcallentrypoints.cpp",

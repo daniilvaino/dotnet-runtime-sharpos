@@ -14,6 +14,11 @@
 #include "runtimecallablewrapper.h"
 #endif
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugPrintForced(const char* msg);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t v);
+#endif
+
 BOOL FinalizerThread::fQuitFinalizer = FALSE;
 
 #if defined(__linux__) && defined(FEATURE_EVENT_TRACE)
@@ -559,10 +564,17 @@ void FinalizerThread::FinalizerThreadCreate()
         MODE_ANY;
     } CONTRACTL_END;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrintForced("[FTC] enter\n");
+#endif
+
 #ifndef TARGET_UNIX
     MHandles[kLowMemoryNotification] =
         CreateMemoryResourceNotification(LowMemoryResourceNotification);
 #endif // TARGET_UNIX
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrintForced("[FTC] before-events\n");
+#endif
 
     hEventFinalizerDone = new CLREvent();
     hEventFinalizerDone->CreateManualEvent(FALSE);
@@ -570,6 +582,11 @@ void FinalizerThread::FinalizerThreadCreate()
     hEventFinalizer->CreateAutoEvent(FALSE);
     hEventFinalizerToShutDown = new CLREvent();
     hEventFinalizerToShutDown->CreateAutoEvent(FALSE);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOSHost_DebugPrintForced("[FTC] events-done hEventFinalizer=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)hEventFinalizer);
+    SharpOSHost_DebugPrintForced("\n");
+#endif
 
     _ASSERTE(g_pFinalizerThread == 0);
     g_pFinalizerThread = SetupUnstartedThread();

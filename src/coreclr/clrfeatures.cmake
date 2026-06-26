@@ -18,7 +18,9 @@ if(NOT DEFINED FEATURE_EVENT_TRACE)
 endif(NOT DEFINED FEATURE_EVENT_TRACE)
 
 if(NOT DEFINED FEATURE_EVENTSOURCE_XPLAT)
-  if (CLR_CMAKE_TARGET_LINUX AND NOT CLR_CMAKE_TARGET_ANDROID)
+  if ((CLR_CMAKE_TARGET_LINUX AND NOT CLR_CMAKE_TARGET_ANDROID) OR CLR_CMAKE_TARGET_SHARPOS)
+    # SharpOS: SPC IL is built under linux.x64.Debug so it has FEATURE_EVENTSOURCE_XPLAT
+    # surface. Our VM must match (else PInvoke targets resolve to NULL → AV in IL_STUB).
     # To actually disable FEATURE_EVENTSOURCE_XPLAT, also change clr.featuredefines.props
     set(FEATURE_EVENTSOURCE_XPLAT 1)
   endif()

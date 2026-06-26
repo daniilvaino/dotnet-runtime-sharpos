@@ -50,6 +50,9 @@ extern "C" __attribute__((weak)) void SharpOSHost_DebugPrint(const char* /*msg*/
 extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintHex(uint64_t /*v*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_Panic(const char* /*msg*/) {}
 extern "C" __attribute__((weak)) void SharpOSHost_DebugWrite(const void* /*buf*/, int32_t /*len*/) {}
+// Always-on diagnostic (ignores Verbose). Use sparingly — only for missing-import
+// surfaces (P/Invoke / QCALL) that must surface even with silent kernel.
+extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintForced(const char* /*msg*/) {}
 
 // Forwards к host-side heap (defined в CrtHeapStubs.cs). Used by HeapAlloc
 // и HeapFree real impls below. Weak fallback для coreclr.dll smoke target.
@@ -3555,6 +3558,137 @@ extern "C" int32_t SharpOS_SN_SNPrintF_1S(char* str, int32_t size, const char* /
     if (str && size > 0) str[0] = 0;
     return 0;
 }
+// errno: BCL Sys::SetErrNo/GetErrNo go through libSystem.Native. Our syscall stubs
+// don't surface meaningful errors, so drop SetErrNo and return 0 from GetErrNo.
+// Skip TLS — would need full PAL plumbing for no real-information benefit.
+extern "C" void    SharpOS_SN_SetErrNo(int32_t /*errorCode*/) {}
+extern "C" int32_t SharpOS_SN_GetErrNo(void) { return 0; }
+// SystemNative_GetCwd(byte* buf, int32_t bufLen) → buf (success) | NULL (error).
+// On NULL+ERANGE the BCL retries with a bigger buffer in a loop (Interop.Sys.GetCwd
+// — see Interop.GetCwd.cs); returning NULL+0 (no errno) throws IOException, which
+// the StackTrace symbolizer then catches → infinite recursion when AV stack walk
+// retriggers File.Exists. So fill '/' and return the buffer on success.
+extern "C" char* SharpOS_SN_GetCwd(char* buf, int32_t bufLen) {
+    if (buf == nullptr || bufLen < 2) return nullptr;
+    buf[0] = '/'; buf[1] = 0;
+    return buf;
+}
+// SystemNative_LStat(const char* path, FileStatus* output) → 0 success / -1 error.
+// We have no filesystem visible to libSystem.Native — always report ENOENT-like
+// failure. BCL File.Exists / Directory.Exists then return false cleanly.
+extern "C" int32_t SharpOS_SN_LStat(const char* /*path*/, void* /*output*/) {
+    return -1;
+}
+// SystemNative_Stat — same contract as LStat, both return -1 ENOENT for us.
+extern "C" int32_t SharpOS_SN_Stat(const char* /*path*/, void* /*output*/) {
+    return -1;
+}
+// SystemNative_Stat2 / FStat / FStat2 — same signature, return -1.
+extern "C" int32_t SharpOS_SN_FStat(intptr_t /*fd*/, void* /*output*/) {
+    return -1;
+}
+// SystemNative_GetPid() — returns process id. Single-process kernel; fake.
+extern "C" int32_t SharpOS_SN_GetPid() {
+    return 1;
+}
+// SystemNative_GetUnixVersion(char* buf, int* capacity) — uname-style string into buf.
+// 0 success / -1 buffer too small (and *capacity set to needed size).
+// Format: "sysname release version" (per pal_runtimeinformation.c). Our identity:
+// "SharpOS 1.0 unikernel".
+extern "C" int32_t SharpOS_SN_GetUnixVersion(char* buf, int32_t* capacity) {
+    if (capacity == nullptr) return -1;
+    const char ver[] = "SharpOS 1.0 unikernel";
+    const int32_t needed = (int32_t)sizeof(ver);  // includes NUL
+    if (buf == nullptr || *capacity < needed) { *capacity = needed; return -1; }
+    for (int i = 0; i < needed; i++) buf[i] = ver[i];
+    return 0;
+}
+// SystemNative_GetOSArchitecture / GetProcessArchitecture — return enum value matching
+// System.Runtime.InteropServices.Architecture. ARCH_X64 = 1 (we're amd64).
+extern "C" int32_t SharpOS_SN_GetOSArchitecture(void) { return 1; }
+extern "C" int32_t SharpOS_SN_GetProcessArchitecture(void) { return 1; }
+// SystemNative_GetUnixRelease() — returns malloc'd UTF-8 string, caller free()s it
+// (StringMarshalling.Utf8 in BCL → Utf8StringMarshaller.Free → routes through our
+// fork's free → SharpOSHost_HeapFree). Returning NULL → BCL throws → AV cascade.
+// Heap-alloc small copy of the version literal.
+extern "C" char* SharpOS_SN_GetUnixRelease(void) {
+    const char rel[] = "1.0";
+    char* d = (char*)SharpOSHost_HeapAlloc(sizeof(rel));
+    if (d == nullptr) return nullptr;
+    for (size_t i = 0; i < sizeof(rel); i++) d[i] = rel[i];
+    return d;
+}
+// SystemNative_Free / SystemNative_Malloc / SystemNative_Realloc / SystemNative_Calloc —
+// BCL routes heap requests for native interop through these. Forward straight to
+// our kernel heap (SharpOSHost_HeapAlloc/Free/Realloc) — same allocator GetUnixRelease
+// hands strings from, so paired free works.
+extern "C" void  SharpOSHost_HeapFree(void* ptr);
+extern "C" void* SharpOSHost_HeapRealloc(void* ptr, size_t newSize);
+extern "C" void  SharpOS_SN_Free(void* ptr) { SharpOSHost_HeapFree(ptr); }
+extern "C" void* SharpOS_SN_Malloc(size_t size) { return SharpOSHost_HeapAlloc(size); }
+extern "C" void* SharpOS_SN_Realloc(void* ptr, size_t newSize) { return SharpOSHost_HeapRealloc(ptr, newSize); }
+extern "C" void* SharpOS_SN_Calloc(size_t n, size_t size) {
+    size_t total = n * size;
+    void* p = SharpOSHost_HeapAlloc(total);
+    if (p != nullptr) { char* c = (char*)p; for (size_t i = 0; i < total; i++) c[i] = 0; }
+    return p;
+}
+// Socket event port — no networking on bare metal. Return ENOTSUP (0x1003D).
+// Same value Linux kernel returns when an OS lacks epoll/kqueue. BCL surfaces
+// this as PlatformNotSupportedException at SocketAsyncEventArgs.* — clean fail.
+extern "C" int32_t SharpOS_SN_CreateSocketEventPort(intptr_t* port) {
+    if (port != nullptr) *port = -1;
+    return 0x1003D;
+}
+extern "C" int32_t SharpOS_SN_CloseSocketEventPort(intptr_t /*port*/) { return 0; }
+extern "C" int32_t SharpOS_SN_CreateSocketEventBuffer(int32_t /*count*/, void** buffer) {
+    if (buffer != nullptr) *buffer = nullptr;
+    return 0x1003D;
+}
+extern "C" int32_t SharpOS_SN_FreeSocketEventBuffer(void* /*buffer*/) { return 0; }
+// SystemNative_SysLog(prio, fmt, arg1) — BCL Debug.Fail/Trace.WriteLine routes here
+// as a fallback debug sink. We have COM1 — forward through our forced-print path
+// (always-on, bypasses Verbose) so kernel observers see managed assert messages.
+extern "C" void SharpOS_SN_SysLog(int32_t /*priority*/, const char* message, const char* arg1) {
+    SharpOSHost_DebugPrintForced("[managed syslog] ");
+    // BCL passes "%s" as the message and the real text as arg1 — print whichever
+    // is non-null (both, if both). Skip printf substitution since we don't have
+    // vsnprintf wired and a static format covers the BCL usage.
+    if (message != nullptr) SharpOSHost_DebugPrintForced(message);
+    if (arg1 != nullptr) {
+        SharpOSHost_DebugPrintForced(" / arg=");
+        SharpOSHost_DebugPrintForced(arg1);
+    }
+    SharpOSHost_DebugPrintForced("\n");
+}
+// SystemNative_GetSystemTimeAsTicks() → 100ns ticks since UNIX epoch (1970-01-01).
+// Our SharpOSHost_GetUtcFileTime returns Windows FILETIME (since 1601-01-01); subtract
+// the epoch delta (134774 days * 86400 s/day * 10M ticks/s = 11644473600000000000...
+// actually 11644473600 * 10000000 = 116444736000000000). Routes through kernel
+// Hal.Rtc + HPET sub-second so DateTime.UtcNow advances correctly.
+extern "C" int64_t SharpOSHost_GetUtcFileTime(void);
+extern "C" int64_t SharpOS_SN_GetSystemTimeAsTicks(void) {
+    int64_t ft = SharpOSHost_GetUtcFileTime();
+    if (ft == 0) return 0;  // RTC read failure
+    return ft - 116444736000000000LL;  // FILETIME 1601 → Unix 1970 delta
+}
+// SystemNative_GetTimestamp() → monotonic hi-res ticks. BCL Stopwatch reads via
+// this. Route through HPET raw counter (already nanosecond-grade, monotonic).
+// BCL also expects companion SystemNative_GetTimestampResolution (ticks/sec) — see below.
+extern "C" uint64_t SharpOSHost_GetHpetCounter(void);
+extern "C" uint64_t SharpOSHost_GetHpetFrequencyHz(void);
+extern "C" int64_t SharpOS_SN_GetTimestamp(void) {
+    return (int64_t)SharpOSHost_GetHpetCounter();
+}
+extern "C" int64_t SharpOS_SN_GetTimestampResolution(void) {
+    uint64_t hz = SharpOSHost_GetHpetFrequencyHz();
+    return hz != 0 ? (int64_t)hz : 10000000LL;  // fallback: 100ns = 10MHz
+}
+// Same as GetTimestamp for us — HPET is already plenty cheap, no reason to
+// degrade resolution for the low-res path.
+extern "C" int64_t SharpOS_SN_GetLowResolutionTimestamp(void) {
+    return (int64_t)SharpOSHost_GetHpetCounter();
+}
 
 static int sharpos_streq(const char* a, const char* b) {
     while (*a && *b) { if (*a != *b) return 0; a++; b++; }
@@ -3591,6 +3725,30 @@ static void* sharpos_resolve_sysnative(const char* n) {
     if (sharpos_streq(n,"SystemNative_SNPrintF_1S"))                    return (void*)&SharpOS_SN_SNPrintF_1S;
     if (sharpos_streq(n,"SystemNative_GetCryptographicallySecureRandomBytes")) return (void*)&SharpOS_SN_GetCryptographicallySecureRandomBytes;
     if (sharpos_streq(n,"SystemNative_GetHostName"))                    return (void*)&SharpOS_SN_GetHostName;
+    if (sharpos_streq(n,"SystemNative_SetErrNo"))                       return (void*)&SharpOS_SN_SetErrNo;
+    if (sharpos_streq(n,"SystemNative_GetErrNo"))                       return (void*)&SharpOS_SN_GetErrNo;
+    if (sharpos_streq(n,"SystemNative_GetCwd"))                         return (void*)&SharpOS_SN_GetCwd;
+    if (sharpos_streq(n,"SystemNative_GetSystemTimeAsTicks"))           return (void*)&SharpOS_SN_GetSystemTimeAsTicks;
+    if (sharpos_streq(n,"SystemNative_GetTimestamp"))                   return (void*)&SharpOS_SN_GetTimestamp;
+    if (sharpos_streq(n,"SystemNative_GetTimestampResolution"))         return (void*)&SharpOS_SN_GetTimestampResolution;
+    if (sharpos_streq(n,"SystemNative_GetLowResolutionTimestamp"))      return (void*)&SharpOS_SN_GetLowResolutionTimestamp;
+    if (sharpos_streq(n,"SystemNative_LStat"))                          return (void*)&SharpOS_SN_LStat;
+    if (sharpos_streq(n,"SystemNative_Stat"))                           return (void*)&SharpOS_SN_Stat;
+    if (sharpos_streq(n,"SystemNative_FStat"))                          return (void*)&SharpOS_SN_FStat;
+    if (sharpos_streq(n,"SystemNative_GetPid"))                         return (void*)&SharpOS_SN_GetPid;
+    if (sharpos_streq(n,"SystemNative_GetUnixVersion"))                 return (void*)&SharpOS_SN_GetUnixVersion;
+    if (sharpos_streq(n,"SystemNative_GetOSArchitecture"))              return (void*)&SharpOS_SN_GetOSArchitecture;
+    if (sharpos_streq(n,"SystemNative_GetProcessArchitecture"))         return (void*)&SharpOS_SN_GetProcessArchitecture;
+    if (sharpos_streq(n,"SystemNative_GetUnixRelease"))                 return (void*)&SharpOS_SN_GetUnixRelease;
+    if (sharpos_streq(n,"SystemNative_Free"))                           return (void*)&SharpOS_SN_Free;
+    if (sharpos_streq(n,"SystemNative_Malloc"))                         return (void*)&SharpOS_SN_Malloc;
+    if (sharpos_streq(n,"SystemNative_Realloc"))                        return (void*)&SharpOS_SN_Realloc;
+    if (sharpos_streq(n,"SystemNative_Calloc"))                         return (void*)&SharpOS_SN_Calloc;
+    if (sharpos_streq(n,"SystemNative_CreateSocketEventPort"))          return (void*)&SharpOS_SN_CreateSocketEventPort;
+    if (sharpos_streq(n,"SystemNative_CloseSocketEventPort"))           return (void*)&SharpOS_SN_CloseSocketEventPort;
+    if (sharpos_streq(n,"SystemNative_CreateSocketEventBuffer"))        return (void*)&SharpOS_SN_CreateSocketEventBuffer;
+    if (sharpos_streq(n,"SystemNative_FreeSocketEventBuffer"))          return (void*)&SharpOS_SN_FreeSocketEventBuffer;
+    if (sharpos_streq(n,"SystemNative_SysLog"))                         return (void*)&SharpOS_SN_SysLog;
     return nullptr;
 }
 
@@ -3607,18 +3765,18 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         if (sharpos_streq(name, "EventSetInformation"))   { g_LastError = 0; return (void*)&SharpOS_EventSetInformation; }
         if (sharpos_streq(name, "EventEnabled"))          { g_LastError = 0; return (void*)&SharpOS_EventEnabled; }
         if (sharpos_streq(name, "EventProviderEnabled"))  { g_LastError = 0; return (void*)&SharpOS_EventProviderEnabled; }
-        SharpOSHost_DebugPrint("[GetProcAddress advapi32] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        SharpOSHost_DebugPrintForced("[GetProcAddress advapi32] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;   // ERROR_PROC_NOT_FOUND
         return nullptr;
     }
     if (mod == SHARPOS_SYSNATIVE_HMODULE && name != nullptr) {
         void* p = sharpos_resolve_sysnative(name);
         if (p != nullptr) { g_LastError = 0; return p; }
-        SharpOSHost_DebugPrint("[GetProcAddress libSystem.Native] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        SharpOSHost_DebugPrintForced("[GetProcAddress libSystem.Native] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;
         return nullptr;
     }
@@ -3643,9 +3801,9 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
     }
     if (mod == SHARPOS_OLE32_HMODULE && name != nullptr) {
         if (sharpos_streq(name, "CoCreateGuid")) { g_LastError = 0; return (void*)&CoCreateGuid; }
-        SharpOSHost_DebugPrint("[GetProcAddress ole32] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        SharpOSHost_DebugPrintForced("[GetProcAddress ole32] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;
         return nullptr;
     }
@@ -3658,17 +3816,17 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         if (sharpos_streq(name, "BCryptFinishHash"))            { g_LastError = 0; return (void*)&BCryptFinishHash; }
         if (sharpos_streq(name, "BCryptDestroyHash"))           { g_LastError = 0; return (void*)&BCryptDestroyHash; }
         if (sharpos_streq(name, "BCryptGetProperty"))           { g_LastError = 0; return (void*)&BCryptGetProperty; }
-        SharpOSHost_DebugPrint("[GetProcAddress bcrypt] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        SharpOSHost_DebugPrintForced("[GetProcAddress bcrypt] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;
         return nullptr;
     }
     if (mod == SHARPOS_SECUR32_HMODULE && name != nullptr) {
         if (sharpos_streq(name, "GetUserNameExW")) { g_LastError = 0; return (void*)&GetUserNameExW; }
-        SharpOSHost_DebugPrint("[GetProcAddress secur32] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        SharpOSHost_DebugPrintForced("[GetProcAddress secur32] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;
         return nullptr;
     }
@@ -3685,9 +3843,9 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         if (sharpos_streq(name, "CryptoNative_EvpMdCtxDestroy"))      { g_LastError = 0; return (void*)&CryptoNative_EvpMdCtxDestroy; }
         if (sharpos_streq(name, "CryptoNative_EvpMdSize"))            { g_LastError = 0; return (void*)&CryptoNative_EvpMdSize; }
         if (sharpos_streq(name, "CryptoNative_GetMaxMdSize"))         { g_LastError = 0; return (void*)&CryptoNative_GetMaxMdSize; }
-        SharpOSHost_DebugPrint("[GetProcAddress syscrypto] unknown name=");
-        SharpOSHost_DebugPrint(name);
-        SharpOSHost_DebugPrint("\n");
+        SharpOSHost_DebugPrintForced("[GetProcAddress syscrypto] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;
         return nullptr;
     }

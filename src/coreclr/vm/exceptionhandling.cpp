@@ -18,6 +18,14 @@
 #include "exinfo.h"
 #include "configuration.h"
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// File-scope declarations — memory rule: extern "C" cannot live inside a
+// function body (broke fork build before). Used by PCRE diagnostics around
+// the IsProcessCorruptedStateException early-fatal check.
+extern "C" void SharpOSHost_DebugPrintForced(const char* msg);
+extern "C" void SharpOSHost_DebugPrintHex(uint64_t v);
+#endif
+
 #if defined(TARGET_X86)
 #define USE_CURRENT_CONTEXT_IN_FILTER
 #endif // TARGET_X86
@@ -563,6 +571,45 @@ static void DispatchLongJmp(IN     PEXCEPTION_RECORD   pExceptionRecord,
 // scope (memory: extern_c_only_file_scope). DebugWrite is NOT
 // Verbose-gated so the diagnostic prints under default-quiet config.
 extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
+
+static void SharpOS_PCRE_Write(const char* s)
+{
+    int n = 0;
+    while (s[n] != 0) n++;
+    SharpOSHost_DebugWrite((const uint8_t*)s, n);
+}
+
+static void SharpOS_PCRE_Hex(uint64_t value)
+{
+    char buf[18];
+    buf[0] = '0';
+    buf[1] = 'x';
+    for (int i = 0; i < 16; i++)
+    {
+        unsigned shift = (unsigned)((15 - i) * 4);
+        unsigned nibble = (unsigned)((value >> shift) & 0xF);
+        buf[2 + i] = (char)(nibble < 10 ? ('0' + nibble) : ('A' + (nibble - 10)));
+    }
+    SharpOSHost_DebugWrite((const uint8_t*)buf, 18);
+}
+
+static void SharpOS_PCRE_Method(MethodDesc* pMD)
+{
+    if (pMD == NULL)
+    {
+        SharpOS_PCRE_Write("null");
+        return;
+    }
+
+    MethodTable* pMT = pMD->GetMethodTable();
+    if (pMT != NULL)
+    {
+        DefineFullyQualifiedNameForClassOnStack();
+        SharpOS_PCRE_Write(GetFullyQualifiedNameForClass(pMT));
+        SharpOS_PCRE_Write("::");
+    }
+    SharpOS_PCRE_Write(pMD->GetName());
+}
 #endif
 
 EXTERN_C EXCEPTION_DISPOSITION __cdecl
@@ -586,8 +633,24 @@ ProcessCLRException(IN     PEXCEPTION_RECORD   pExceptionRecord,
 #ifndef TARGET_X86
     // Skip native frames of asm helpers that have the ProcessCLRException set as their personality routine.
     // There is nothing to do for those with the new exception handling.
-    if (!ExecutionManager::IsManagedCode((PCODE)pDispatcherContext->ControlPc))
+    bool isManagedControlPc = ExecutionManager::IsManagedCode((PCODE)pDispatcherContext->ControlPc);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_PCRE_Write("[PCRE] enter pc=");
+    SharpOS_PCRE_Hex((uint64_t)pDispatcherContext->ControlPc);
+    SharpOS_PCRE_Write(" estab=");
+    SharpOS_PCRE_Hex((uint64_t)pDispatcherContext->EstablisherFrame);
+    SharpOS_PCRE_Write(" code=");
+    SharpOS_PCRE_Hex((uint64_t)pExceptionRecord->ExceptionCode);
+    SharpOS_PCRE_Write(" flags=");
+    SharpOS_PCRE_Hex((uint64_t)pExceptionRecord->ExceptionFlags);
+    SharpOS_PCRE_Write(" managed=");
+    SharpOS_PCRE_Write(isManagedControlPc ? "1\n" : "0\n");
+#endif
+    if (!isManagedControlPc)
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[PCRE] skip native\n");
+#endif
         return ExceptionContinueSearch;
     }
 #endif
@@ -596,6 +659,9 @@ ProcessCLRException(IN     PEXCEPTION_RECORD   pExceptionRecord,
     // level and let 3rd party the chance to handle them.
     if (pThread->HasThreadStateNC(Thread::TSNC_SkipManagedPersonalityRoutine))
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[PCRE] skip managed personality state\n");
+#endif
         if (pExceptionRecord->ExceptionFlags & EXCEPTION_UNWINDING)
         {
             // The 3rd argument passes to PopExplicitFrame is normally the parent SP to correctly handle InlinedCallFrame embbeded
@@ -628,15 +694,63 @@ ProcessCLRException(IN     PEXCEPTION_RECORD   pExceptionRecord,
             return ExceptionContinueSearch;
         }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrintForced("[PCRE-corr] code=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)pExceptionRecord->ExceptionCode);
+        SharpOSHost_DebugPrintForced(" addr=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)pExceptionRecord->ExceptionAddress);
+        if (pExceptionRecord->NumberParameters >= 2)
+        {
+            SharpOSHost_DebugPrintForced(" info[0]=0x");
+            SharpOSHost_DebugPrintHex((uint64_t)pExceptionRecord->ExceptionInformation[0]);
+            SharpOSHost_DebugPrintForced(" info[1]=0x");
+            SharpOSHost_DebugPrintHex((uint64_t)pExceptionRecord->ExceptionInformation[1]);
+        }
+        SharpOSHost_DebugPrintForced(" corrupt=");
+        SharpOSHost_DebugPrintHex((uint64_t)(IsProcessCorruptedStateException(pExceptionRecord->ExceptionCode, NULL) ? 1 : 0));
+        // MapWin32FaultToCOMPlusException — что CLR классифицирует этот код как
+        // (kNullReferenceException=0/kAccessViolation/kSEHException/...).
+        SharpOSHost_DebugPrintForced(" map=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)MapWin32FaultToCOMPlusException(pExceptionRecord));
+        SharpOSHost_DebugPrintForced("\n");
+#endif
+
+#if defined(TARGET_SHARPOS)
+        // SharpOS: bypass corrupted-state fatal for managed null-deref AV.
+        // STATUS_ACCESS_VIOLATION + CR2 < NULL_AREA_SIZE in managed code is the
+        // canonical `obj.Method()` null pointer pattern — MapWin32FaultToCOM-
+        // PlusException correctly classifies it as kNullReferenceException
+        // and the rest of CLR's hardware-fault flow (RhThrowHwEx via Handle-
+        // HardwareException) creates a catchable NRE. But the early corrupted-
+        // state check runs BEFORE any of that and treats raw AV as fatal.
+        // Skip it for the managed-null-deref pattern; non-managed or non-NULL
+        // AVs still fail-fast.
+        const bool sharpos_isManagedNullDeref =
+            pExceptionRecord->ExceptionCode == STATUS_ACCESS_VIOLATION
+            && pExceptionRecord->NumberParameters >= 2
+            && pExceptionRecord->ExceptionInformation[1] < NULL_AREA_SIZE
+            && ExecutionManager::IsManagedCode((PCODE)pExceptionRecord->ExceptionAddress);
+        if (!sharpos_isManagedNullDeref)
+#endif
         // Failfast if exception indicates corrupted process state
         if (IsProcessCorruptedStateException(pExceptionRecord->ExceptionCode, /* throwable */ NULL))
         {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOSHost_DebugPrintForced("[PCRE-corr] FATAL path taken\n");
+#endif
             EEPOLICY_HANDLE_FATAL_ERROR(pExceptionRecord->ExceptionCode);
         }
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        if (sharpos_isManagedNullDeref)
+            SharpOSHost_DebugPrintForced("[PCRE-corr] managed-null-deref bypass\n");
+#endif
 
 #ifdef TARGET_X86
         CallRtlUnwind((PEXCEPTION_REGISTRATION_RECORD)pEstablisherFrame, NULL, pExceptionRecord, 0);
 #else
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[PCRE] first-pass ClrUnwindEx\n");
+#endif
         ClrUnwindEx(pExceptionRecord,
                     (UINT_PTR)pThread,
                     INVALID_RESUME_ADDRESS,
@@ -1523,6 +1637,86 @@ BOOL HandleHardwareException(PAL_SEHException* ex)
 }
 
 #endif // TARGET_UNIX && !TARGET_SHARPOS
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// SharpOS routing entry — called from kernel HwFaultBridge BEFORE the generic
+// SEH walker. If this returns nonzero, the fault has been (or will be) routed
+// to a managed catch via RhThrowHwEx. If it returns 0, the kernel falls
+// through to the existing SehDispatch path for native C++ __try handlers.
+//
+// We don't call HandleHardwareException() directly — that whole function plus
+// IsSafeToHandleHardwareException is in the `TARGET_UNIX && !TARGET_SHARPOS`
+// block above (Linux PAL signal handler path) and isn't compiled for us.
+// Instead we inline the CORE logic (lines ~1556-1597 of HandleHardwareException
+// in the disabled block): build FaultingExceptionFrame, ExInfo with
+// HardwareFault kind, classify AV+CR2<NULL_AREA_SIZE → null-ref, call
+// Ex.RhThrowHwEx via METHOD__EH__RH_THROWHW_EX, then DispatchExSecondPass.
+extern "C" int SharpOS_CoreCLR_TryHandleHardwareException(
+    EXCEPTION_RECORD* rec, CONTEXT* ctx)
+{
+    if (rec == NULL || ctx == NULL) return 0;
+    if (!g_fEEStarted) return 0;
+
+    SharpOSHost_DebugPrintForced("[SOS-HHE] code=0x");
+    SharpOSHost_DebugPrintHex((uint64_t)rec->ExceptionCode);
+    SharpOSHost_DebugPrintForced("\n");
+
+    // We only route AV / NULL / divide-by-zero patterns from managed code.
+    // Anything else (incl. STATUS_BREAKPOINT) — let SehDispatch handle.
+    if (rec->ExceptionCode != STATUS_ACCESS_VIOLATION
+        && rec->ExceptionCode != EXCEPTION_INT_DIVIDE_BY_ZERO
+        && rec->ExceptionCode != EXCEPTION_INT_OVERFLOW)
+    {
+        return 0;
+    }
+
+    PCODE controlPc = (PCODE)GetIP(ctx);
+    if (!ExecutionManager::IsManagedCode(controlPc))
+    {
+        SharpOSHost_DebugPrintForced("[SOS-HHE] not managed code, fallthrough\n");
+        return 0;
+    }
+
+    SharpOSHost_DebugPrintForced("[SOS-HHE] managed fault — routing to RhThrowHwEx\n");
+
+    // FaultingExceptionFrame chain — let walker resume from here as if a
+    // managed callsite issued the throw.
+    FaultingExceptionFrame fef;
+    {
+        GCX_COOP();
+        AdjustContextForVirtualStub(rec, ctx);
+        fef.InitAndLink(ctx);
+    }
+
+    Thread* pThread = GetThread();
+    ExInfo exInfo(pThread, rec, ctx, ExKind::HardwareFault);
+
+    DWORD exceptionCode = rec->ExceptionCode;
+    if (exceptionCode == STATUS_ACCESS_VIOLATION
+        && rec->NumberParameters >= 2
+        && rec->ExceptionInformation[1] < NULL_AREA_SIZE)
+    {
+        // Null-reference marker — RhThrowHwEx maps code=0 to NRE.
+        exceptionCode = 0;
+    }
+
+    GCPROTECT_BEGIN(exInfo.m_exception);
+    PREPARE_NONVIRTUAL_CALLSITE(METHOD__EH__RH_THROWHW_EX);
+    DECLARE_ARGHOLDER_ARRAY(args, 2);
+    args[ARGNUM_0] = DWORD_TO_ARGHOLDER(exceptionCode);
+    args[ARGNUM_1] = PTR_TO_ARGHOLDER(&exInfo);
+    pThread->IncPreventAbort();
+    // Ex.RhThrowHwEx(exceptionCode, &exInfo)
+    CALL_MANAGED_METHOD_NORET(args)
+    DispatchExSecondPass(&exInfo);
+    GCPROTECT_END();
+
+    // RhThrowHwEx is annotated noreturn semantically; if we reach this, the
+    // exception was somehow handled in-place — report handled to caller.
+    SharpOSHost_DebugPrintForced("[SOS-HHE] returned from DispatchExSecondPass (unexpected)\n");
+    return 1;
+}
+#endif // TARGET_SHARPOS
 
 void FirstChanceExceptionNotification()
 {
@@ -3209,7 +3403,31 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
 
         EH_LOG((LL_INFO100, "Calling catch funclet at %p\n", pHandlerIP));
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrintForced("[CCF] entering CallFunclet handler=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)pHandlerIP);
+        SharpOSHost_DebugPrintForced(" curIP=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)GetIP(pvRegDisplay->pCurrentContext));
+        SharpOSHost_DebugPrintForced(" curSP=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)GetSP(pvRegDisplay->pCurrentContext));
+        SharpOSHost_DebugPrintForced("\n");
+#endif
+
         dwResumePC = pCodeManager->CallFunclet(throwable, pHandlerIP, pvRegDisplay, exInfo, false /* isFilterFunclet */);
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOSHost_DebugPrintForced("[CCF] CallFunclet returned dwResumePC=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)(uintptr_t)dwResumePC);
+        SharpOSHost_DebugPrintForced("\n[CCF] resumePC bytes -32..+15:");
+        {
+            uint8_t* __cb = (uint8_t*)(uintptr_t)dwResumePC - 32;
+            for (int __i = 0; __i < 48; __i++) {
+                SharpOSHost_DebugPrintForced(" 0x");
+                SharpOSHost_DebugPrintHex((uint64_t)__cb[__i]);
+            }
+            SharpOSHost_DebugPrintForced("\n");
+        }
+#endif
 
         FixContext(pvRegDisplay->pCurrentContext);
 
@@ -3298,14 +3516,107 @@ void CallCatchFunclet(OBJECTREF throwable, BYTE* pHandlerIP, REGDISPLAY* pvRegDi
     // Rbp in StackFrameIterator/SehUnwind.
     bool   __sosRbpFix   = (pHandlerIP != NULL && pvRegDisplay && pvRegDisplay->pCurrentContext);
     uint64_t __sosSavedRbp = __sosRbpFix ? (uint64_t)pvRegDisplay->pCurrentContext->Rbp : 0;
+    if (__sosRbpFix) {
+        CONTEXT* __cc = pvRegDisplay->pCurrentContext;
+        SharpOSHost_DebugPrintForced("[CCF-pre-UNR] Rip=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rip);
+        SharpOSHost_DebugPrintForced(" Rsp=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rsp);
+        SharpOSHost_DebugPrintForced(" Rbp=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rbp);
+        SharpOSHost_DebugPrintForced(" Rbx=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rbx);
+        SharpOSHost_DebugPrintForced(" R12=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->R12);
+        SharpOSHost_DebugPrintForced("\n");
+    }
 #endif
     ExInfo::UpdateNonvolatileRegisters(pvRegDisplay->pCurrentContext, pvRegDisplay, FALSE);
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-    if (__sosRbpFix)
+    if (__sosRbpFix) {
+        CONTEXT* __cc = pvRegDisplay->pCurrentContext;
+        SharpOSHost_DebugPrintForced("[CCF-post-UNR] Rip=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rip);
+        SharpOSHost_DebugPrintForced(" Rsp=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rsp);
+        SharpOSHost_DebugPrintForced(" Rbp=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rbp);
+        SharpOSHost_DebugPrintForced(" Rbx=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rbx);
+        SharpOSHost_DebugPrintForced(" R12=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->R12);
+        SharpOSHost_DebugPrintForced(" (savedRbp=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)__sosSavedRbp);
+        SharpOSHost_DebugPrintForced(")\n");
         pvRegDisplay->pCurrentContext->Rbp = (DWORD64)__sosSavedRbp;
+    }
 #endif
     if (pHandlerIP != NULL)
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        CONTEXT* __cc = pvRegDisplay->pCurrentContext;
+        SharpOSHost_DebugPrintForced("[CCF-resume] ContextFlags=0x");
+        SharpOSHost_DebugPrintHex((uint64_t)__cc->ContextFlags);
+        SharpOSHost_DebugPrintForced("\n[CCF-resume] Rip=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rip);
+        SharpOSHost_DebugPrintForced(" Rsp=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rsp);
+        SharpOSHost_DebugPrintForced(" Rbp=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rbp);
+        SharpOSHost_DebugPrintForced("\n[CCF-resume] Rbx=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rbx);
+        SharpOSHost_DebugPrintForced(" Rsi=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rsi);
+        SharpOSHost_DebugPrintForced(" Rdi=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rdi);
+        SharpOSHost_DebugPrintForced("\n[CCF-resume] R12=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->R12);
+        SharpOSHost_DebugPrintForced(" R13=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->R13);
+        SharpOSHost_DebugPrintForced(" R14=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->R14);
+        SharpOSHost_DebugPrintForced(" R15=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->R15);
+        SharpOSHost_DebugPrintForced("\n[CCF-resume] Rax=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rax);
+        SharpOSHost_DebugPrintForced(" Rcx=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rcx);
+        SharpOSHost_DebugPrintForced(" Rdx=0x"); SharpOSHost_DebugPrintHex((uint64_t)__cc->Rdx);
+        SharpOSHost_DebugPrintForced("\n[CCF-resume] callerTargetSp=0x"); SharpOSHost_DebugPrintHex((uint64_t)callerTargetSp);
+        SharpOSHost_DebugPrintForced(" targetSp=0x"); SharpOSHost_DebugPrintHex((uint64_t)targetSp);
+        SharpOSHost_DebugPrintForced(" m_csfEHClause.SP=0x"); SharpOSHost_DebugPrintHex((uint64_t)exInfo->m_csfEHClause.SP);
+        SharpOSHost_DebugPrintForced("\n");
+        // Invariant: if continuation has `add rsp, imm32; pop rbp; ret`
+        // (48 81 C4 ?? ?? ?? ?? 5D C3) within first 64 bytes, the function's
+        // epilog adds imm+16 to RSP to reach the caller. For resume to land
+        // on caller correctly: ctx.Rsp + imm + 16 == callerTargetSp.
+        //
+        // Step124 patch: pvRegDisplay->pCurrentContext.Rsp stays at the throw-
+        // point's RSP (inside the throw-frame, not the catching frame body)
+        // because we route HW faults via SharpOS_CoreCLR_TryHandleHardware-
+        // Exception → RhThrowHwEx without the Linux PAL FaultingException-
+        // Frame::InitAndLink fixup that normally sets RSP to the catching
+        // frame's body state. Detect via epilog pattern and patch RSP from
+        // the invariant. Stop-gap until catching-frame RSP is computed from
+        // unwind metadata directly.
+        {
+            uint8_t* __pc = (uint8_t*)(uintptr_t)__cc->Rip;
+            for (int __k = 0; __k < 64; __k++) {
+                if (__pc[__k] == 0x48 && __pc[__k+1] == 0x81 && __pc[__k+2] == 0xC4
+                    && __pc[__k+7] == 0x5D && __pc[__k+8] == 0xC3) {
+                    uint32_t imm = *(uint32_t*)(__pc + __k + 3);
+                    uint64_t expectedRsp = callerTargetSp - imm - 16;
+                    int64_t delta = (int64_t)((uint64_t)__cc->Rsp) - (int64_t)expectedRsp;
+                    SharpOSHost_DebugPrintForced("[CCF-inv] epilog@+0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)__k);
+                    SharpOSHost_DebugPrintForced(" add rsp, 0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)imm);
+                    SharpOSHost_DebugPrintForced(" expectedRsp=0x");
+                    SharpOSHost_DebugPrintHex(expectedRsp);
+                    SharpOSHost_DebugPrintForced(" actualRsp=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)__cc->Rsp);
+                    SharpOSHost_DebugPrintForced(" delta=0x");
+                    SharpOSHost_DebugPrintHex((uint64_t)delta);
+                    SharpOSHost_DebugPrintForced("\n");
+                    if (delta != 0) {
+                        SharpOSHost_DebugPrintForced("[CCF-inv] patching Rsp 0x");
+                        SharpOSHost_DebugPrintHex((uint64_t)__cc->Rsp);
+                        SharpOSHost_DebugPrintForced(" -> 0x");
+                        SharpOSHost_DebugPrintHex(expectedRsp);
+                        SharpOSHost_DebugPrintForced("\n");
+                        __cc->Rsp = expectedRsp;
+                    }
+                    break;
+                }
+            }
+        }
+        // Stack snapshot — 16 qwords around resume Rsp.
+        uint64_t* __sp = (uint64_t*)(uintptr_t)__cc->Rsp;
+        SharpOSHost_DebugPrintForced("[CCF-resume] stk@Rsp:");
+        for (int __i = 0; __i < 16; __i++) {
+            SharpOSHost_DebugPrintForced(" 0x");
+            SharpOSHost_DebugPrintHex(__sp[__i]);
+        }
+        SharpOSHost_DebugPrintForced("\n");
+#endif
         pCodeManager->ResumeAfterCatch(pvRegDisplay->pCurrentContext, targetSSP, fIntercepted);
     }
     else
@@ -3842,6 +4153,9 @@ CLR_BOOL SfiInitWorker(StackFrameIterator* pThis, CONTEXT* pStackwalkCtx, CLR_BO
 
     if (pExInfo->m_passNumber == 1)
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[SFI] reset skip-managed-personality pass1\n");
+#endif
         pThread->ResetThreadStateNC(Thread::TSNC_SkipManagedPersonalityRoutine);
     }
 
@@ -3945,6 +4259,17 @@ CLR_BOOL SfiInitWorker(StackFrameIterator* pThis, CONTEXT* pStackwalkCtx, CLR_BO
         pThis->SetAdjustedControlPC(controlPC);
 
         *pfIsExceptionIntercepted = CheckExceptionInterception(pThis, pExInfo);
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[SFI] init-frame pass=");
+        SharpOS_PCRE_Hex((uint64_t)pExInfo->m_passNumber);
+        SharpOS_PCRE_Write(" pc=");
+        SharpOS_PCRE_Hex((uint64_t)controlPC);
+        SharpOS_PCRE_Write(" sp=");
+        SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+        SharpOS_PCRE_Write(" method=");
+        SharpOS_PCRE_Method(pThis->m_crawl.GetFunction());
+        SharpOS_PCRE_Write("\n");
+#endif
         EH_LOG((LL_INFO100, "SfiInit (pass %d): Exception stack walking starting at IP=%p, SP=%p, method %s::%s\n",
             pExInfo->m_passNumber, controlPC, GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()),
             pThis->m_crawl.GetFunction()->m_pszDebugClassName, pThis->m_crawl.GetFunction()->m_pszDebugMethodName));
@@ -3954,6 +4279,9 @@ CLR_BOOL SfiInitWorker(StackFrameIterator* pThis, CONTEXT* pStackwalkCtx, CLR_BO
         // There are no managed frames on the stack
         EH_LOG((LL_INFO100, "SfiInit: No more managed frames found on stack\n"));
 #ifdef HOST_WINDOWS
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[SFI] set skip-managed-personality no-managed-frames\n");
+#endif
         GetThread()->SetThreadStateNC(Thread::TSNC_SkipManagedPersonalityRoutine);
         RaiseException(pExInfo->m_ExceptionCode, EXCEPTION_NONCONTINUABLE, pExInfo->m_ptrs.ExceptionRecord->NumberParameters, pExInfo->m_ptrs.ExceptionRecord->ExceptionInformation);
 #else
@@ -4030,6 +4358,23 @@ CLR_BOOL SfiNextWorker(StackFrameIterator* pThis, uint* uExCollideClauseIdx, CLR
     retVal = pThis->Next();
     if (retVal == SWA_FAILED)
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[SFI] first-next-swa-failed pass=");
+        SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+        SharpOS_PCRE_Write(" prePC=");
+        SharpOS_PCRE_Hex((uint64_t)preUnwindControlPC);
+        SharpOS_PCRE_Write(" curIP=");
+        SharpOS_PCRE_Hex((uint64_t)GetIP(pThis->m_crawl.GetRegisterSet()->pCurrentContext));
+        SharpOS_PCRE_Write(" curSP=");
+        SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+        SharpOS_PCRE_Write(" state=");
+        SharpOS_PCRE_Hex((uint64_t)pThis->GetFrameState());
+        SharpOS_PCRE_Write(" pFrame=");
+        SharpOS_PCRE_Hex((uint64_t)pThis->m_crawl.GetFrame());
+        SharpOS_PCRE_Write(" m_pFrame=");
+        SharpOS_PCRE_Hex((uint64_t)GetThread()->GetFrame());
+        SharpOS_PCRE_Write("\n");
+#endif
         EH_LOG((LL_INFO100, "SfiNext (pass=%d): failed to get next frame", pTopExInfo->m_passNumber));
         goto Exit;
     }
@@ -4135,6 +4480,27 @@ CLR_BOOL SfiNextWorker(StackFrameIterator* pThis, uint* uExCollideClauseIdx, CLR
 #endif
                 ;
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOS_PCRE_Write("[SFI] native-boundary pass=");
+            SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+            SharpOS_PCRE_Write(" prePC=");
+            SharpOS_PCRE_Hex((uint64_t)preUnwindControlPC);
+            SharpOS_PCRE_Write(" preMethod=");
+            SharpOS_PCRE_Method(codeInfo.GetMethodDesc());
+            SharpOS_PCRE_Write(" curIP=");
+            SharpOS_PCRE_Hex((uint64_t)GetIP(pThis->m_crawl.GetRegisterSet()->pCurrentContext));
+            SharpOS_PCRE_Write(" frame=");
+            SharpOS_PCRE_Hex((uint64_t)pFrame);
+            SharpOS_PCRE_Write(" frameId=");
+            SharpOS_PCRE_Hex((uint64_t)((pFrame == FRAME_TOP) ? 0xffffffffffffffffULL : (uint64_t)pFrame->GetFrameIdentifier()));
+            SharpOS_PCRE_Write(" rev=");
+            SharpOS_PCRE_Hex((uint64_t)isPropagatingToNativeCode);
+            SharpOS_PCRE_Write(" ext=");
+            SharpOS_PCRE_Hex((uint64_t)isPropagatingToExternalNativeCode);
+            SharpOS_PCRE_Write(" notHandled=");
+            SharpOS_PCRE_Hex((uint64_t)isNotHandledByRuntime);
+            SharpOS_PCRE_Write("\n");
+#endif
             if (isNotHandledByRuntime && IsExceptionFromManagedCode(pTopExInfo->m_ptrs.ExceptionRecord))
             {
                 EH_LOG((LL_INFO100, "SfiNext (pass %d): no more managed frames on the stack, the exception is not handled by the runtime\n", pTopExInfo->m_passNumber));
@@ -4151,6 +4517,23 @@ CLR_BOOL SfiNextWorker(StackFrameIterator* pThis, uint* uExCollideClauseIdx, CLR
                 else
                 {
 #ifdef HOST_WINDOWS
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+                    SharpOS_PCRE_Write("[SFI] set skip-managed-personality propagate-native\n");
+                    {
+                        OBJECTREF throwable = pTopExInfo->GetThrowable();
+                        SharpOS_PCRE_Write("[SFI] rethrow throwable=");
+                        if (throwable != NULL)
+                        {
+                            DefineFullyQualifiedNameForClassOnStack();
+                            SharpOS_PCRE_Write(GetFullyQualifiedNameForClass(throwable->GetMethodTable()));
+                        }
+                        else
+                        {
+                            SharpOS_PCRE_Write("null");
+                        }
+                        SharpOS_PCRE_Write("\n");
+                    }
+#endif
                     GetThread()->SetThreadStateNC(Thread::TSNC_SkipManagedPersonalityRoutine);
                     GCX_PREEMP_NO_DTOR();
                     RaiseException(pTopExInfo->m_ExceptionCode, EXCEPTION_NONCONTINUABLE, pTopExInfo->m_ptrs.ExceptionRecord->NumberParameters, pTopExInfo->m_ptrs.ExceptionRecord->ExceptionInformation);
@@ -4176,6 +4559,21 @@ CLR_BOOL SfiNextWorker(StackFrameIterator* pThis, uint* uExCollideClauseIdx, CLR
         *uExCollideClauseIdx = 0xffffffff;
         if (pThis->GetFrameState() == StackFrameIterator::SFITER_DONE)
         {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOS_PCRE_Write("[SFI] sfiter-done pass=");
+            SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+            SharpOS_PCRE_Write(" prePC=");
+            SharpOS_PCRE_Hex((uint64_t)preUnwindControlPC);
+            SharpOS_PCRE_Write(" curIP=");
+            SharpOS_PCRE_Hex((uint64_t)GetIP(pThis->m_crawl.GetRegisterSet()->pCurrentContext));
+            SharpOS_PCRE_Write(" curSP=");
+            SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+            SharpOS_PCRE_Write(" pFrame=");
+            SharpOS_PCRE_Hex((uint64_t)pThis->m_crawl.GetFrame());
+            SharpOS_PCRE_Write(" m_pFrame=");
+            SharpOS_PCRE_Hex((uint64_t)GetThread()->GetFrame());
+            SharpOS_PCRE_Write("\n");
+#endif
             EH_LOG((LL_INFO100, "SfiNext (pass=%d): no more managed frames found on stack", pTopExInfo->m_passNumber));
             goto Exit;
         }
@@ -4240,6 +4638,19 @@ CLR_BOOL SfiNextWorker(StackFrameIterator* pThis, uint* uExCollideClauseIdx, CLR
 
     if (retVal == SWA_FAILED)
     {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[SFI] swa-failed pass=");
+        SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+        SharpOS_PCRE_Write(" prePC=");
+        SharpOS_PCRE_Hex((uint64_t)preUnwindControlPC);
+        SharpOS_PCRE_Write(" curIP=");
+        SharpOS_PCRE_Hex((uint64_t)GetIP(pThis->m_crawl.GetRegisterSet()->pCurrentContext));
+        SharpOS_PCRE_Write(" curSP=");
+        SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+        SharpOS_PCRE_Write(" state=");
+        SharpOS_PCRE_Hex((uint64_t)pThis->GetFrameState());
+        SharpOS_PCRE_Write("\n");
+#endif
         EH_LOG((LL_INFO100, "SfiNext (pass=%d): failed to get next frame", pTopExInfo->m_passNumber));
     }
     else
@@ -4272,11 +4683,64 @@ Exit:;
 
         if (pThis->GetFrameState() == StackFrameIterator::SFITER_FRAMELESS_METHOD)
         {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOS_PCRE_Write("[SFI] next-frame pass=");
+            SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+            SharpOS_PCRE_Write(" pc=");
+            SharpOS_PCRE_Hex((uint64_t)controlPC);
+            SharpOS_PCRE_Write(" sp=");
+            SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+            SharpOS_PCRE_Write(" method=");
+            SharpOS_PCRE_Method(pThis->m_crawl.GetFunction());
+            SharpOS_PCRE_Write(" intercepted=");
+            SharpOS_PCRE_Hex((uint64_t)*pfIsExceptionIntercepted);
+            SharpOS_PCRE_Write(" unwoundRpi=");
+            SharpOS_PCRE_Hex(fUnwoundReversePInvoke ? (uint64_t)*fUnwoundReversePInvoke : 0xFFFFULL);
+            SharpOS_PCRE_Write(" success=");
+            SharpOS_PCRE_Hex((uint64_t)success);
+            SharpOS_PCRE_Write("\n");
+#endif
             EH_LOG((LL_INFO100, "SfiNext (pass %d): returning managed frame at IP=%p, SP=%p, method %s::%s\n",
                 pTopExInfo->m_passNumber, controlPC, GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()),
                 pThis->m_crawl.GetFunction()->m_pszDebugClassName, pThis->m_crawl.GetFunction()->m_pszDebugMethodName));
         }
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        else
+        {
+            // success path but state != SFITER_FRAMELESS_METHOD — log anyway
+            SharpOS_PCRE_Write("[SFI] success-non-frameless pass=");
+            SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+            SharpOS_PCRE_Write(" state=");
+            SharpOS_PCRE_Hex((uint64_t)pThis->GetFrameState());
+            SharpOS_PCRE_Write(" curIP=");
+            SharpOS_PCRE_Hex((uint64_t)GetIP(pThis->m_crawl.GetRegisterSet()->pCurrentContext));
+            SharpOS_PCRE_Write(" curSP=");
+            SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+            SharpOS_PCRE_Write("\n");
+        }
+#endif
     }
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    else
+    {
+        // success == FALSE — log return state
+        SharpOS_PCRE_Write("[SFI] returning-false pass=");
+        SharpOS_PCRE_Hex((uint64_t)pTopExInfo->m_passNumber);
+        SharpOS_PCRE_Write(" retVal=");
+        SharpOS_PCRE_Hex((uint64_t)retVal);
+        SharpOS_PCRE_Write(" state=");
+        SharpOS_PCRE_Hex((uint64_t)pThis->GetFrameState());
+        SharpOS_PCRE_Write(" curIP=");
+        SharpOS_PCRE_Hex((uint64_t)GetIP(pThis->m_crawl.GetRegisterSet()->pCurrentContext));
+        SharpOS_PCRE_Write(" curSP=");
+        SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pThis->m_crawl.GetRegisterSet()));
+        SharpOS_PCRE_Write(" unwoundRpi=");
+        SharpOS_PCRE_Hex(fUnwoundReversePInvoke ? (uint64_t)*fUnwoundReversePInvoke : 0xFFFFULL);
+        SharpOS_PCRE_Write(" intercepted=");
+        SharpOS_PCRE_Hex(pfIsExceptionIntercepted ? (uint64_t)*pfIsExceptionIntercepted : 0xFFFFULL);
+        SharpOS_PCRE_Write("\n");
+    }
+#endif
 
     return success;
 }
@@ -4421,6 +4885,58 @@ void DECLSPEC_NORETURN DispatchExSecondPass(ExInfo *pExInfo)
     PCODE handlingFramePC = pExInfo->m_handlingFramePC;
 #endif
     PCODE pCatchHandler = pExInfo->m_pCatchHandler;
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_PCRE_Write("[DESP] enter handlingFrameSP=0x");
+    SharpOS_PCRE_Hex((uint64_t)handlingFrameSP);
+    SharpOS_PCRE_Write(" pCatchHandler=0x");
+    SharpOS_PCRE_Hex((uint64_t)pCatchHandler);
+    SharpOS_PCRE_Write(" idxCurClause=0x");
+    SharpOS_PCRE_Hex((uint64_t)pExInfo->m_idxCurClause);
+    SharpOS_PCRE_Write(" exInfo=0x");
+    SharpOS_PCRE_Hex((uint64_t)pExInfo);
+    SharpOS_PCRE_Write("\n");
+    // Dump raw qwords around the m_pCatchHandler / m_handlingFrameSP offsets
+    // so we can see if C# wrote to the right slot.
+    SharpOS_PCRE_Write("[DESP] offsetof(pCatchHandler)=0x");
+    SharpOS_PCRE_Hex((uint64_t)offsetof(ExInfo, m_pCatchHandler));
+    SharpOS_PCRE_Write(" offsetof(handlingFrameSP)=0x");
+    SharpOS_PCRE_Hex((uint64_t)offsetof(ExInfo, m_handlingFrameSP));
+    SharpOS_PCRE_Write(" sizeof(ExInfo)=0x");
+    SharpOS_PCRE_Hex((uint64_t)sizeof(ExInfo));
+    SharpOS_PCRE_Write("\n");
+    SharpOS_PCRE_Write("[DESP] offsetof(m_frameIter)=0x");
+    SharpOS_PCRE_Hex((uint64_t)offsetof(ExInfo, m_frameIter));
+    SharpOS_PCRE_Write(" sizeof(StackFrameIterator)=0x");
+    SharpOS_PCRE_Hex((uint64_t)sizeof(StackFrameIterator));
+    SharpOS_PCRE_Write(" offsetof(m_notifyDebuggerSP)=0x");
+    SharpOS_PCRE_Hex((uint64_t)offsetof(ExInfo, m_notifyDebuggerSP));
+    SharpOS_PCRE_Write("\n");
+    // Diag: REGDISPLAY location and current SP at pass2 entry.
+    {
+        REGDISPLAY* pRD = pExInfo->m_frameIter.m_crawl.GetRegisterSet();
+        SharpOS_PCRE_Write("[DESP] pRD=0x");
+        SharpOS_PCRE_Hex((uint64_t)pRD);
+        if (pRD) {
+            SharpOS_PCRE_Write(" RD.SP=0x");
+            SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pRD));
+            SharpOS_PCRE_Write(" RD.PC=0x");
+            SharpOS_PCRE_Hex((uint64_t)GetControlPC(pRD));
+        }
+        SharpOS_PCRE_Write("\n");
+        // (m_pRegDisplay offset within SFI is checked via static_assert at
+        // build time — see AsmOffsets.cs line 284; no runtime print needed.)
+    }
+    {
+        uint64_t* raw = (uint64_t*)((uint8_t*)pExInfo + 0x230);
+        for (int i = 0; i < 20; i++) {
+            SharpOS_PCRE_Write("[DESP] raw +0x");
+            SharpOS_PCRE_Hex((uint64_t)(0x230 + i * 8));
+            SharpOS_PCRE_Write(" = 0x");
+            SharpOS_PCRE_Hex(raw[i]);
+            SharpOS_PCRE_Write("\n");
+        }
+    }
+#endif
 
     StackFrameIterator *pFrameIter = &pExInfo->m_frameIter;
     pExInfo->m_passNumber = 2;
@@ -4448,12 +4964,24 @@ void DECLSPEC_NORETURN DispatchExSecondPass(ExInfo *pExInfo)
             break;
         }
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        SharpOS_PCRE_Write("[DESP] iter curSP=0x");
+        SharpOS_PCRE_Hex((uint64_t)GetRegdisplaySP(pFrameIter->m_crawl.GetRegisterSet()));
+        SharpOS_PCRE_Write(" vs handlingFrameSP=0x");
+        SharpOS_PCRE_Hex((uint64_t)handlingFrameSP);
+        SharpOS_PCRE_Write(" eq=");
+        SharpOS_PCRE_Hex((uint64_t)(GetRegdisplaySP(pFrameIter->m_crawl.GetRegisterSet()) == handlingFrameSP));
+        SharpOS_PCRE_Write("\n");
+#endif
         if ((GetRegdisplaySP(pFrameIter->m_crawl.GetRegisterSet()) == handlingFrameSP)
 #if TARGET_ARM64
             && (GetControlPC(pFrameIter->m_crawl.GetRegisterSet()) == handlingFramePC)
-#endif  
+#endif
             )
         {
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+            SharpOS_PCRE_Write("[DESP] match — invoking partial second pass\n");
+#endif
             // invoke only a partial second-pass here...
             InvokeSecondPass(pExInfo, startIdx, catchingTryRegionIdx);
             break;
@@ -4461,6 +4989,11 @@ void DECLSPEC_NORETURN DispatchExSecondPass(ExInfo *pExInfo)
 
         InvokeSecondPass(pExInfo, startIdx);
     }
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    SharpOS_PCRE_Write("[DESP] loop exited — calling CallCatchFunclet pCatchHandler=0x");
+    SharpOS_PCRE_Hex((uint64_t)pCatchHandler);
+    SharpOS_PCRE_Write("\n");
+#endif
 
     // ------------------------------------------------
     //
