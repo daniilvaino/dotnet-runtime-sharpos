@@ -89,6 +89,100 @@ extern "C" __attribute__((weak)) void SharpOSHost_DebugPrintForced(const char* /
 // sink; the kernel's real (non-Verbose-gated) [RuntimeExport] overrides it
 // at runtime. Reverted with the probe after diagnosis.
 extern "C" __attribute__((weak)) void SharpOSHost_DebugWrite(const char* /*buf*/, int /*len*/) {}
+
+// step126.8 — weak fallbacks for all kernel-side policy exports added
+// during PowerShell bring-up. Real impls live in:
+//   OS/src/PAL/SharpOSHost/ThreadApartment.cs
+//   OS/src/PAL/SharpOSHost/TokenSecurity.cs
+//   OS/src/PAL/SharpOSHost/ShellFolders.cs
+//   OS/src/PAL/SharpOSHost/LockdownPolicy.cs
+//   OS/src/PAL/SharpOSHost/FileSystemPolicy.cs
+// Kernel link wins at final OS.exe link.
+
+// Thread apartment (QCALL)
+extern "C" __attribute__((weak)) int SharpOSHost_ThreadSetApartmentState(int /*state*/) { return 2 /*Unknown*/; }
+extern "C" __attribute__((weak)) int SharpOSHost_ThreadGetApartmentState(void) { return 2; }
+
+// advapi32 Token/Privilege
+extern "C" __attribute__((weak)) int SharpOSHost_LookupPrivilegeValue(unsigned long long* /*luid*/) { return 1313; }
+extern "C" __attribute__((weak)) int SharpOSHost_LookupPrivilegeName(unsigned long* /*outLen*/) { return 1313; }
+extern "C" __attribute__((weak)) int SharpOSHost_OpenProcessToken(void** /*tok*/) { return 6; }
+extern "C" __attribute__((weak)) int SharpOSHost_OpenThreadToken(void** /*tok*/) { return 6; }
+extern "C" __attribute__((weak)) int SharpOSHost_AdjustTokenPrivileges(void) { return 6; }
+extern "C" __attribute__((weak)) int SharpOSHost_GetTokenInformation(unsigned long* /*outLen*/) { return 6; }
+extern "C" __attribute__((weak)) int SharpOSHost_ImpersonateLoggedOnUser(void) { return 6; }
+extern "C" __attribute__((weak)) int SharpOSHost_RevertToSelf(void) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_CheckTokenMembership(int* /*isMem*/) { return 6; }
+extern "C" __attribute__((weak)) int SharpOSHost_DuplicateTokenEx(void** /*tok*/) { return 6; }
+
+// shell32 known folders
+extern "C" __attribute__((weak)) int SharpOSHost_ShellGetKnownFolderPath(void** /*outPath*/) { return (int)0x80004005; }
+extern "C" __attribute__((weak)) int SharpOSHost_ShellGetFolderPath(wchar_t* /*path*/) { return (int)0x80004005; }
+
+// wldp (Lockdown Policy)
+extern "C" __attribute__((weak)) int SharpOSHost_WldpGetLockdownPolicy(unsigned long* /*s*/) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_WldpQueryDynamicCodeTrust(void) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_WldpSetDynamicCodeTrust(void) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_WldpIsClassInApprovedList(int* /*a*/) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_WldpQueryWindowsLockdownMode(unsigned long* /*m*/) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_WldpIsDynamicCodePolicyEnabled(int* /*e*/) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_WldpCanExecuteFile(int* /*r*/) { return 0; }
+
+// File system policy (CreateDirectory / RemoveDirectory / SetEnvVar / FormatMessage / CONOUT$)
+extern "C" __attribute__((weak)) int SharpOSHost_CreateDirectory(void) { return 183; }
+extern "C" __attribute__((weak)) int SharpOSHost_RemoveDirectory(void) { return 2; }
+extern "C" __attribute__((weak)) int SharpOSHost_SetEnvironmentVariable(void) { return 0; }
+extern "C" __attribute__((weak)) int SharpOSHost_FormatMessage(void) { return 1815; }
+extern "C" __attribute__((weak)) int SharpOSHost_ClassifyConsoleFileName(const unsigned char* /*name*/, int /*len*/) { return 0; }
+
+// step126.9 — console control + startup info + AMSI weak fallbacks.
+extern "C" __attribute__((weak)) int  SharpOSHost_SetConsoleCtrlHandler(void) { return 1; }
+extern "C" __attribute__((weak)) void SharpOSHost_GetStartupInfo(unsigned int* p, unsigned int sz) {
+    if (p == nullptr || sz == 0) return;
+    unsigned int n = sz / 4;
+    for (unsigned int i = 0; i < n; i++) p[i] = 0;
+    p[0] = sz;
+}
+extern "C" __attribute__((weak)) int  SharpOSHost_AmsiInitialize(unsigned long long* ctx) { if (ctx) *ctx = 1; return 0; }
+extern "C" __attribute__((weak)) void SharpOSHost_AmsiUninitialize(void) {}
+extern "C" __attribute__((weak)) int  SharpOSHost_AmsiOpenSession(unsigned long long* s) { if (s) *s = 1; return 0; }
+extern "C" __attribute__((weak)) void SharpOSHost_AmsiCloseSession(void) {}
+extern "C" __attribute__((weak)) int  SharpOSHost_AmsiScan(unsigned int* r) { if (r) *r = 0; return 0; }
+
+// step126.10 — ole32/combase COM init weak fallbacks.
+extern "C" __attribute__((weak)) int   SharpOSHost_CoInitializeEx(int /*ci*/) { return 0; }
+extern "C" __attribute__((weak)) int   SharpOSHost_CoInitialize(void) { return 0; }
+extern "C" __attribute__((weak)) void  SharpOSHost_CoUninitialize(void) {}
+extern "C" __attribute__((weak)) int   SharpOSHost_CoCreateInstance(void** p) { if (p) *p = nullptr; return (int)0x80040154; }
+extern "C" __attribute__((weak)) void* SharpOSHost_CoTaskMemAlloc(unsigned long long /*sz*/) { return nullptr; }
+extern "C" __attribute__((weak)) void  SharpOSHost_CoTaskMemFree(void* /*p*/) {}
+
+// step126.11 — user32 UI/accessibility weak fallbacks.
+extern "C" __attribute__((weak)) int   SharpOSHost_SystemParametersInfo(unsigned int /*a*/, unsigned int /*p*/, unsigned char* pv, unsigned int /*w*/) {
+    if (pv != nullptr) { for (int i = 0; i < 32; i++) pv[i] = 0; }
+    return 1;
+}
+extern "C" __attribute__((weak)) int   SharpOSHost_GetSystemMetrics(int /*idx*/) { return 0; }
+extern "C" __attribute__((weak)) void* SharpOSHost_GetConsoleWindow(void) { return nullptr; }
+
+// step126.12 — type equivalence weak fallback.
+extern "C" __attribute__((weak)) int SharpOSHost_TypeIsEquivalentTo(void) { return 0; }
+
+// step126.13 — process/codepage/account weak fallbacks.
+extern "C" __attribute__((weak)) void* SharpOSHost_OpenProcess(unsigned int /*pid*/) { return nullptr; }
+extern "C" __attribute__((weak)) int   SharpOSHost_GetCPInfoEx(void) { return 1; }
+extern "C" __attribute__((weak)) int   SharpOSHost_LookupAccountName(unsigned int* a, unsigned int* b, int* c) {
+    if (a) *a = 0; if (b) *b = 0; if (c) *c = 0; return 1332;
+}
+
+// step126.14 — ReadConsole weak fallback (writes \r\n only).
+extern "C" __attribute__((weak)) int   SharpOSHost_ReadConsole(wchar_t* buf, unsigned int n, unsigned int* outN) {
+    unsigned int w = 0;
+    if (buf != nullptr && n > 0) buf[w++] = L'\r';
+    if (buf != nullptr && w < n) buf[w++] = L'\n';
+    if (outN) *outN = w;
+    return 1;
+}
 // step 72 / Frontier-B root fix — weak fallback so the fork links if the
 // kernel doesn't provide the real [RuntimeExport]. No-op leaves *out=…
 // untouched; the threads.cpp caller pre-zeroes and only trusts non-zero

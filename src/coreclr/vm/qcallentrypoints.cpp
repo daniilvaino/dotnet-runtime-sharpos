@@ -74,6 +74,62 @@
 
 #include "versionresilienthashcode.h"
 
+#if defined(TARGET_SHARPOS) && !defined(FEATURE_COMINTEROP_APARTMENT_SUPPORT)
+// step126.8: SharpOS PowerShell calls Thread.SetApartmentState(STA) due to
+// [STAThread] on Main. Full FEATURE_COMINTEROP_APARTMENT_SUPPORT would
+// bring CoInitializeEx / EnsureComStarted / IMessageFilter surface we
+// don't want on unikernel.
+//
+// Per SharpOS invariant: the fork side is a thin marshalling shim — all
+// policy ("what value to return", "what state to record") lives in C#
+// kernel via SharpOSHost_Thread* exports. The shims here just wrap the
+// QCALL contract (BEGIN_QCALL/END_QCALL for GC mode) around the kernel
+// call.
+extern "C" int  SharpOSHost_ThreadSetApartmentState(int state);
+extern "C" int  SharpOSHost_ThreadGetApartmentState();
+
+extern "C" INT32 QCALLTYPE ThreadNative_SetApartmentState(QCall::ObjectHandleOnStack /*t*/,
+                                                          INT32 iState)
+{
+    QCALL_CONTRACT;
+    INT32 retVal = 0;
+    BEGIN_QCALL;
+    retVal = (INT32)SharpOSHost_ThreadSetApartmentState((int)iState);
+    END_QCALL;
+    return retVal;
+}
+
+extern "C" INT32 QCALLTYPE ThreadNative_GetApartmentState(QCall::ObjectHandleOnStack /*t*/)
+{
+    QCALL_CONTRACT;
+    INT32 retVal = 0;
+    BEGIN_QCALL;
+    retVal = (INT32)SharpOSHost_ThreadGetApartmentState();
+    END_QCALL;
+    return retVal;
+}
+#endif // TARGET_SHARPOS && !FEATURE_COMINTEROP_APARTMENT_SUPPORT
+
+#if defined(TARGET_SHARPOS) && !defined(FEATURE_TYPEEQUIVALENCE)
+// step126.12: PowerShell init touches RuntimeTypeHandle.IsEquivalentTo
+// (gated under FEATURE_TYPEEQUIVALENCE on stock). Kernel C# policy in
+// TypeEquivalence.cs always reports "not equivalent" — distinct types
+// stay distinct, which is the correct answer when no COM TypeLib imports
+// exist. QCall::TypeHandle comes from runtimehandles.h (already included).
+extern "C" int SharpOSHost_TypeIsEquivalentTo(void);
+
+extern "C" BOOL QCALLTYPE RuntimeTypeHandle_IsEquivalentTo(QCall::TypeHandle /*rtType1*/,
+                                                           QCall::TypeHandle /*rtType2*/)
+{
+    QCALL_CONTRACT;
+    BOOL retVal = FALSE;
+    BEGIN_QCALL;
+    retVal = (BOOL)SharpOSHost_TypeIsEquivalentTo();
+    END_QCALL;
+    return retVal;
+}
+#endif // TARGET_SHARPOS && !FEATURE_TYPEEQUIVALENCE
+
 static const Entry s_QCall[] =
 {
     DllImportEntry(ArgIterator_Init)
@@ -123,6 +179,9 @@ static const Entry s_QCall[] =
     DllImportEntry(RuntimeTypeHandle_MakeSZArray)
     DllImportEntry(RuntimeTypeHandle_MakeArray)
     DllImportEntry(RuntimeTypeHandle_IsCollectible)
+#if defined(FEATURE_TYPEEQUIVALENCE) || defined(TARGET_SHARPOS)
+    DllImportEntry(RuntimeTypeHandle_IsEquivalentTo)
+#endif
     DllImportEntry(RuntimeTypeHandle_GetConstraints)
     DllImportEntry(RuntimeTypeHandle_GetArgumentTypesFromFunctionPointer)
     DllImportEntry(RuntimeTypeHandle_GetAssemblySlow)
@@ -289,10 +348,17 @@ static const Entry s_QCall[] =
     DllImportEntry(ThreadNative_GetCurrentOSThreadId)
     DllImportEntry(ThreadNative_Initialize)
     DllImportEntry(ThreadNative_GetThreadState)
-#ifdef FEATURE_COMINTEROP_APARTMENT_SUPPORT
+#if defined(FEATURE_COMINTEROP_APARTMENT_SUPPORT) || defined(TARGET_SHARPOS)
+    // step126.8: SharpOS-side PowerShell calls Thread.SetApartmentState(STA)
+    // for COM threading model. The C++ implementations exist in
+    // comsynchronizable.cpp unconditionally (the COM-specific portion is
+    // gated separately); only the QCALL registration was under the apartment
+    // feature flag. Expose the entries for SharpOS so PowerShell init can
+    // resolve them — the function silently no-ops for thread states beyond
+    // setting the unstarted apartment field.
     DllImportEntry(ThreadNative_GetApartmentState)
     DllImportEntry(ThreadNative_SetApartmentState)
-#endif // FEATURE_COMINTEROP_APARTMENT_SUPPORT
+#endif // FEATURE_COMINTEROP_APARTMENT_SUPPORT || TARGET_SHARPOS
     DllImportEntry(ThreadNative_Join)
     DllImportEntry(ThreadNative_Abort)
     DllImportEntry(ThreadNative_ResetAbort)

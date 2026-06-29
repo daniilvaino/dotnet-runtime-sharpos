@@ -79,6 +79,13 @@ extern "C" __attribute__((weak)) void     SharpOSHost_ExitThread(uint32_t /*code
 extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetCurrentThreadId() { return 1; }
 extern "C" __attribute__((weak)) void*    SharpOSHost_GetCurrentThread() { return (void*)(intptr_t)-2; }
 extern "C" __attribute__((weak)) uint32_t SharpOSHost_WaitForSingleObject(uint64_t /*h*/, uint32_t /*ms*/) { return 0; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_WaitForMultipleObjects(uint32_t /*n*/, uint64_t* /*h*/, int /*all*/, uint32_t /*ms*/) { return 0xFFFFFFFFu; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetLogicalDrives(void) { return 4u; }
+extern "C" __attribute__((weak)) int      SharpOSHost_GetVolumeInformation(uint32_t* /*s*/, uint32_t* /*m*/, uint32_t* /*f*/) { return 0; }
+extern "C" __attribute__((weak)) int      SharpOSHost_EnumProcesses(uint32_t* /*p*/) { return 0; }
+extern "C" __attribute__((weak)) int      SharpOSHost_AmsiNotifyOperation(void) { return 0; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetDriveType(int /*c*/) { return 3; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_FindDirEntry(const uint8_t* /*p*/, uint32_t /*i*/, wchar_t* /*o*/, uint32_t /*c*/, uint32_t* /*a*/) { return 0; }
 extern "C" __attribute__((weak)) int      SharpOSHost_CloseHandle(uint64_t /*h*/) { return 1; }
 extern "C" __attribute__((weak)) void     SharpOSHost_Sleep(uint32_t /*ms*/) {}
 extern "C" __attribute__((weak)) int      SharpOSHost_SwitchToThread() { return 1; }
@@ -183,12 +190,11 @@ CRT_STUB(wcstoul)
 // Generated from llvm-readobj --coff-imports filtered to non-CRT DLLs.
 
 // AcquireSRWLockExclusive — real impl below
-CRT_STUB(AdjustTokenPrivileges)
+// AdjustTokenPrivileges - real impl below (step126)
 CRT_STUB(CancelIoEx)
 // CloseHandle — real impl below (no-op for our fake handles)
 // CoCreateGuid — real impl below (rdtsc-mixed pseudo-random v4 GUID)
-CRT_STUB(CoTaskMemAlloc)
-CRT_STUB(CoTaskMemFree)
+// CoTaskMemAlloc / CoTaskMemFree — real impls below (step126.10)
 CRT_STUB(ConnectNamedPipe)
 // CreateEventW — real impl below (single-thread fake handle)
 CRT_STUB(CreateFileA)
@@ -258,7 +264,7 @@ CRT_STUB(GetOverlappedResult)
 // GetProcessHeap — real impl below
 CRT_STUB(GetSidSubAuthority)
 CRT_STUB(GetSidSubAuthorityCount)
-CRT_STUB(GetStdHandle)
+// GetStdHandle — real impl below (step126 console facade)
 // GetSystemInfo — real impl below
 // GetSystemTime — real impl below
 // GetSystemTimeAsFileTime — real impl below
@@ -266,7 +272,7 @@ CRT_STUB(GetThreadContext)
 // GetThreadGroupAffinity — real impl below
 // GetThreadPriority — real impl below (returns THREAD_PRIORITY_NORMAL)
 // GetTickCount64 — real impl below
-CRT_STUB(GetTokenInformation)
+// GetTokenInformation - real impl below (step126)
 CRT_STUB(GetWriteWatch)
 // GlobalMemoryStatusEx — real impl below (plausible defaults for GC sizing)
 // HeapAlloc / HeapCreate / HeapDestroy / HeapFree — real impls below
@@ -279,12 +285,12 @@ CRT_STUB(K32GetProcessMemoryInfo)
 // LoadLibraryExW — real impl below (returns NULL + ERROR_MOD_NOT_FOUND)
 CRT_STUB(LoadStringW)
 // LocalFree — real impl below (forwards to SharpOSHost_HeapFree, paired with LocalAlloc)
-CRT_STUB(LookupPrivilegeValueW)
+// LookupPrivilegeValueW - real impl below (step126)
 // MapViewOfFile — real impl below (returns the file's in-memory buffer)
 // MapViewOfFileEx — real impl below (ignores base hint, returns buf+offset)
 // MultiByteToWideChar — real impl below (ASCII identity fast path)
-CRT_STUB(OpenProcessToken)
-CRT_STUB(OpenThreadToken)
+// OpenProcessToken - real impl below (step126)
+// OpenThreadToken - real impl below (step126)
 // OutputDebugStringA/W — real impls below (silent no-op; no debugger attached)
 // QueryInformationJobObject — real impl below
 // QueryPerformanceCounter / QueryPerformanceFrequency — real impls below
@@ -294,15 +300,17 @@ CRT_STUB(RaiseException)
 // RaiseFailFastException — real impl below (print + continue, non-fatal)
 // ReadFile — real impl below (forwarder to SharpOSHost_FileRead)
 CRT_STUB(ReadProcessMemory)
-CRT_STUB(RegCloseKey)
-CRT_STUB(RegOpenKeyExW)
-CRT_STUB(RegQueryValueExW)
+// RegCloseKey / RegOpenKeyExW / RegQueryValueExW — real impls below
+// (step125 forwarders to SharpOSHost_Reg* in C# kernel).
+// RegEnumKeyExW / RegEnumValueW / RegQueryInfoKeyW / RegCreateKeyExW /
+// RegFlushKey — also real impls (no CRT_STUB record was needed; advapi32
+// SDK provides them so linker resolves either way).
 // ReleaseSRWLockExclusive — real impl below
 // ReleaseSemaphore — real impl below (no-op)
 // ResetEvent — real impl below (no-op)
 CRT_STUB(ResetWriteWatch)
 // ResumeThread — real impl below (no-op, returns prev suspend count 0)
-CRT_STUB(RevertToSelf)
+// RevertToSelf - real impl below (step126)
 // RtlCaptureContext — real impl below (naked asm, captures GP regs + flags)
 // RtlDeleteFunctionTable / RtlInstallFunctionTableCallback — real impls below
 // RtlLookupFunctionEntry / RtlVirtualUnwind — implemented C#-side
@@ -315,7 +323,7 @@ CRT_STUB(RtlLookupFunctionEntry)
 CRT_STUB(RtlRestoreContext)
 CRT_STUB(RtlUnwind)
 CRT_STUB(RtlVirtualUnwind)
-CRT_STUB(SetEnvironmentVariableW)
+// SetEnvironmentVariableW - real impl below (step126.5)
 // SetEvent — real impl below (no-op)
 // SetFilePointer — real impl below (forwarder to SharpOSHost_FileSetPosition)
 // SetLastError — real impl below
@@ -341,7 +349,7 @@ CRT_STUB(VirtualUnlock)
 // WaitForSingleObject[Ex] — real impl below (returns WAIT_OBJECT_0)
 // WakeAllConditionVariable — real impl below
 // WideCharToMultiByte — real impl below (ASCII identity fast path)
-CRT_STUB(WriteFile)
+// WriteFile — real impl below (step126 console facade, std-handle route)
 
 // --- Real impls (replace traps as we discover them empirically) ---
 //
@@ -1637,9 +1645,18 @@ extern "C" void WakeByAddressAll(void* addr) {
 }
 CRT_REAL(WakeByAddressAll);
 
+// Forward decl — full body around line 2306; CloseHandle below uses it to
+// route DirHandle (CreateFileW BACKUP_SEMANTICS) frees through HeapFree
+// rather than the kernel HandleTable.
+static bool sharpos_is_dir_handle(void* h);
+
 extern "C" int CloseHandle(void* h) {
     TRACE_REAL(CloseHandle);
     g_LastError = 0;
+    if (sharpos_is_dir_handle(h)) {
+        SharpOSHost_HeapFree(h);
+        return 1;
+    }
     return SharpOSHost_CloseHandle((uint64_t)(uintptr_t)h);
 }
 CRT_REAL(CloseHandle);
@@ -1664,18 +1681,28 @@ CRT_REAL(WaitForSingleObjectEx);
 // MRES.Wait / Task.Wait pair busy-spin forever. Multi-handle WaitAll/
 // WaitAny still not implemented — falls through to WAIT_FAILED so a
 // caller using it gets a clear failure instead of a silent bogus signal.
-extern "C" uint32_t WaitForMultipleObjects(uint32_t n, void* ph, int /*all*/, uint32_t ms) {
+// Marshal HANDLE[] (void**, 8B each) to ulong[] for the kernel boundary,
+// then delegate the actual wait-any policy to SharpOSHost_WaitForMultipleObjects.
+// Stack buffer caps at MAXIMUM_WAIT_OBJECTS=64 (Win32 limit).
+static uint32_t sharpos_wait_multi(uint32_t n, void* ph, int all, uint32_t ms) {
+    if (n == 0 || n > 64 || ph == nullptr) return 0xFFFFFFFFu;
+    if (n == 1) return SharpOSHost_WaitForSingleObject(
+                          (uint64_t)(uintptr_t)(*(void**)ph), ms);
+    uint64_t handles[64];
+    void** src = (void**)ph;
+    for (uint32_t i = 0; i < n; i++)
+        handles[i] = (uint64_t)(uintptr_t)src[i];
+    return SharpOSHost_WaitForMultipleObjects(n, handles, all, ms);
+}
+
+extern "C" uint32_t WaitForMultipleObjects(uint32_t n, void* ph, int all, uint32_t ms) {
     TRACE_REAL(WaitForMultipleObjects);
-    if (n == 1 && ph != nullptr)
-        return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)(*(void**)ph), ms);
-    return 0xFFFFFFFFu; // WAIT_FAILED
+    return sharpos_wait_multi(n, ph, all, ms);
 }
 CRT_REAL(WaitForMultipleObjects);
-extern "C" uint32_t WaitForMultipleObjectsEx(uint32_t n, void* ph, int /*all*/, uint32_t ms, int /*alert*/) {
+extern "C" uint32_t WaitForMultipleObjectsEx(uint32_t n, void* ph, int all, uint32_t ms, int /*alert*/) {
     TRACE_REAL(WaitForMultipleObjectsEx);
-    if (n == 1 && ph != nullptr)
-        return SharpOSHost_WaitForSingleObject((uint64_t)(uintptr_t)(*(void**)ph), ms);
-    return 0xFFFFFFFFu; // WAIT_FAILED
+    return sharpos_wait_multi(n, ph, all, ms);
 }
 CRT_REAL(WaitForMultipleObjectsEx);
 
@@ -1884,6 +1911,57 @@ CRT_REAL(FlushViewOfFile);
 // already compiled in this file + SharpOSHost_FillRandom.
 #define SHARPOS_SYSCRYPTO_HMODULE ((void*)(uintptr_t)0x5C39709AU)
 
+// step126.2: shell32 sentinel. SHGetKnownFolderPath / SHGetFolderPathW return
+// E_FAIL — managed Environment.GetFolderPathCore returns empty string on
+// non-zero HRESULT, PowerShell's System.Management.Automation.Platform.cctor
+// uses empty paths and continues init.
+#define SHARPOS_SHELL32_HMODULE   ((void*)(uintptr_t)0x53E11320U)
+
+// step126.4: wldp (Windows Lock Down Policy). PowerShell queries for
+// AppLocker / WDAC / Constrained Language Mode policy. On bare metal
+// SharpOS no policy is active — return "everything allowed".
+#define SHARPOS_WLDP_HMODULE      ((void*)(uintptr_t)0x401D9011U)
+
+// step126.9: amsi.dll (Antimalware Scan Interface). PowerShell scans
+// script content before execution. Kernel returns CLEAN unconditionally.
+#define SHARPOS_AMSI_HMODULE      ((void*)(uintptr_t)0xA751C0DEU)
+
+// step126.11: user32.dll. PowerShell touches it for GetConsoleWindow,
+// window styles, message handling. On unikernel there are no windows;
+// stubs return null/zero/default to indicate "no window context".
+#define SHARPOS_USER32_HMODULE    ((void*)(uintptr_t)0x05E32100U)
+
+// step126.19: mpr.dll (Multiple Provider Router) — network drive enumeration.
+// iphlpapi.dll — IP Helper / network interface info. Both touched by PS at
+// PSDrive automount for "network drives" / IPGlobalProperties. On unikernel
+// no network providers exist; sentinel returns succeed so PS doesn't throw
+// FileNotFoundException from LoadLibrary, but GetProcAddress returns null
+// for any name → PS treats as "library has no exports" and skips network drives.
+#define SHARPOS_MPR_HMODULE       ((void*)(uintptr_t)0x05049270U)
+#define SHARPOS_IPHLPAPI_HMODULE  ((void*)(uintptr_t)0x07FE19A0U)
+
+// Case-insensitive substring search: does `s` (UTF-16) contain ASCII `needle`?
+// Used to detect API Set names like "api-ms-win-core-file-l1-1-0" anywhere
+// in the path (loader may pass bare name or "\sharpos\..." prefix).
+static int sharpos_wstr_icontains(const wchar_t* s, const char* needle) {
+    if (s == nullptr || needle == nullptr || needle[0] == 0) return 0;
+    size_t sLen = 0; while (s[sLen] != 0) sLen++;
+    size_t nLen = 0; while (needle[nLen] != 0) nLen++;
+    if (sLen < nLen) return 0;
+    for (size_t i = 0; i + nLen <= sLen; i++) {
+        int match = 1;
+        for (size_t j = 0; j < nLen; j++) {
+            wchar_t sc = s[i + j];
+            char    tc = needle[j];
+            if (sc >= L'A' && sc <= L'Z') sc = (wchar_t)(sc - L'A' + L'a');
+            if (tc >= 'A' && tc <= 'Z')   tc = (char)(tc - 'A' + 'a');
+            if (sc != (wchar_t)tc) { match = 0; break; }
+        }
+        if (match) return 1;
+    }
+    return 0;
+}
+
 // Case-insensitive equality of last `n` UTF-16 chars in `s` with ASCII `tail`.
 static int sharpos_wstr_iends_with(const wchar_t* s, const char* tail) {
     size_t sLen = 0; while (s[sLen] != 0) sLen++;
@@ -1905,13 +1983,39 @@ static int sharpos_is_advapi32(const wchar_t* name) {
     // Accepts: "advapi32", "advapi32.dll", "advapi32.dll.dll",
     //         "\sharpos\advapi32.dll" etc. — все варианты которые
     //         loader перебирает.
+    // step126.3: also accepts Windows API Set forwarders that resolve to
+    // advapi32 exports on real Windows. API set families redirected here:
+    //   api-ms-win-eventing-*       → advapi32 ETW
+    //   api-ms-win-security-base-*  → advapi32 token/SID
+    //   api-ms-win-security-lsalookup-* → advapi32 LookupPrivilege*
+    //   api-ms-win-service-*        → advapi32 service control
+    // API set names are virtual — they never exist as physical DLLs.
     return sharpos_wstr_iends_with(name, "advapi32")
         || sharpos_wstr_iends_with(name, "advapi32.dll")
-        || sharpos_wstr_iends_with(name, "advapi32.dll.dll");
+        || sharpos_wstr_iends_with(name, "advapi32.dll.dll")
+        || sharpos_wstr_icontains(name, "api-ms-win-eventing-")
+        || sharpos_wstr_icontains(name, "api-ms-win-security-base-")
+        || sharpos_wstr_icontains(name, "api-ms-win-security-lsalookup-")
+        || sharpos_wstr_icontains(name, "api-ms-win-security-sddl-")
+        || sharpos_wstr_icontains(name, "api-ms-win-service-");
 }
 
 static int sharpos_is_kernel32(const wchar_t* name) {
     if (name == nullptr) return 0;
+    // Direct: kernel32 / kernelbase / ntdll variants.
+    // API sets: every "api-ms-win-core-*" forwarder resolves to kernel32
+    // on real Windows. Examples: -file-, -processenvironment-, -string-,
+    // -handle-, -memory-, -libraryloader-, -synch-, -threadpool-, -debug-,
+    // -errorhandling-, -console-, -localization-, -processthreads-,
+    // -sysinfo-, -systemtopology-, -rtlsupport-, -datetime-, -delayload-,
+    // -fibers-, -heap-, -interlocked-, -io-, -kernel32-, -namedpipe-,
+    // -profile-, -psapi-, -registry-, -timezone-, -url-, -util-, -version-,
+    // -winrt-*, -wow64-*, ...
+    // Rather than enumerate ~80 variants, match the api-ms-win-core- prefix.
+    // Exclude api-ms-win-core-com-* / -winrt-* — they forward to ole32/combase
+    // (caught by sharpos_is_ole32).
+    if (sharpos_wstr_icontains(name, "api-ms-win-core-com-")) return 0;
+    if (sharpos_wstr_icontains(name, "api-ms-win-core-winrt-")) return 0;
     return sharpos_wstr_iends_with(name, "kernel32")
         || sharpos_wstr_iends_with(name, "kernel32.dll")
         || sharpos_wstr_iends_with(name, "kernel32.dll.dll")
@@ -1920,14 +2024,22 @@ static int sharpos_is_kernel32(const wchar_t* name) {
         || sharpos_wstr_iends_with(name, "kernelbase.dll.dll")
         || sharpos_wstr_iends_with(name, "ntdll")
         || sharpos_wstr_iends_with(name, "ntdll.dll")
-        || sharpos_wstr_iends_with(name, "ntdll.dll.dll");
+        || sharpos_wstr_iends_with(name, "ntdll.dll.dll")
+        || sharpos_wstr_icontains(name, "api-ms-win-core-");
 }
 
 static int sharpos_is_ole32(const wchar_t* name) {
     if (name == nullptr) return 0;
+    // ole32 + combase + COM-related API sets. The api-ms-win-core-com-*
+    // family forwards to combase.dll on real Windows; we route them all
+    // through our ole32 resolver branch.
     return sharpos_wstr_iends_with(name, "ole32")
         || sharpos_wstr_iends_with(name, "ole32.dll")
-        || sharpos_wstr_iends_with(name, "ole32.dll.dll");
+        || sharpos_wstr_iends_with(name, "ole32.dll.dll")
+        || sharpos_wstr_iends_with(name, "combase")
+        || sharpos_wstr_iends_with(name, "combase.dll")
+        || sharpos_wstr_icontains(name, "api-ms-win-core-com-")
+        || sharpos_wstr_icontains(name, "api-ms-win-core-winrt-");
 }
 
 static int sharpos_is_bcrypt(const wchar_t* name) {
@@ -1942,6 +2054,48 @@ static int sharpos_is_secur32(const wchar_t* name) {
     return sharpos_wstr_iends_with(name, "secur32")
         || sharpos_wstr_iends_with(name, "secur32.dll")
         || sharpos_wstr_iends_with(name, "secur32.dll.dll");
+}
+
+static int sharpos_is_shell32(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "shell32")
+        || sharpos_wstr_iends_with(name, "shell32.dll")
+        || sharpos_wstr_iends_with(name, "shell32.dll.dll");
+}
+
+static int sharpos_is_wldp(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "wldp")
+        || sharpos_wstr_iends_with(name, "wldp.dll")
+        || sharpos_wstr_iends_with(name, "wldp.dll.dll");
+}
+
+static int sharpos_is_amsi(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "amsi")
+        || sharpos_wstr_iends_with(name, "amsi.dll")
+        || sharpos_wstr_iends_with(name, "amsi.dll.dll");
+}
+
+static int sharpos_is_user32(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "user32")
+        || sharpos_wstr_iends_with(name, "user32.dll")
+        || sharpos_wstr_iends_with(name, "user32.dll.dll");
+}
+
+static int sharpos_is_mpr(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "mpr")
+        || sharpos_wstr_iends_with(name, "mpr.dll")
+        || sharpos_wstr_iends_with(name, "mpr.dll.dll");
+}
+
+static int sharpos_is_iphlpapi(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "iphlpapi")
+        || sharpos_wstr_iends_with(name, "iphlpapi.dll")
+        || sharpos_wstr_iends_with(name, "iphlpapi.dll.dll");
 }
 
 static int sharpos_is_syscrypto(const wchar_t* name) {
@@ -2011,6 +2165,43 @@ extern "C" void* LoadLibraryExW(const wchar_t* lpLibFileName, void* /*hFile*/, u
         SharpOSHost_DebugPrint("[LoadLibrary secur32] returning sentinel handle\n");
         g_LastError = 0;
         return SHARPOS_SECUR32_HMODULE;
+    }
+    // step126.2: shell32 → sentinel; SHGetKnownFolderPath et al return E_FAIL.
+    if (sharpos_is_shell32(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary shell32] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_SHELL32_HMODULE;
+    }
+    // step126.4: wldp → sentinel; Wldp* return "no policy / everything allowed".
+    if (sharpos_is_wldp(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary wldp] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_WLDP_HMODULE;
+    }
+    // step126.9: amsi → sentinel; AMSI scans return CLEAN.
+    if (sharpos_is_amsi(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary amsi] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_AMSI_HMODULE;
+    }
+    // step126.11: user32 → sentinel; window-related stubs return null/default.
+    if (sharpos_is_user32(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary user32] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_USER32_HMODULE;
+    }
+    // step126.19: mpr/iphlpapi → sentinel; PS PSDrive automount + network
+    // enumeration. GetProcAddress returns null for all names → PS skips
+    // network drive providers, FileSystem provider init survives.
+    if (sharpos_is_mpr(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary mpr] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_MPR_HMODULE;
+    }
+    if (sharpos_is_iphlpapi(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary iphlpapi] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_IPHLPAPI_HMODULE;
     }
     // step 99 pass 3: libSystem.Security.Cryptography.Native.OpenSsl → sentinel;
     // CryptoNative_* RNG/SHA256 are in-image.
@@ -2092,18 +2283,171 @@ CRT_REAL(GetFullPathNameW);
 //           in-memory copy. Write/create not supported.
 #define HANDLE_INVALID  ((void*)(intptr_t)-1)
 
+// Forward decls for console-pseudo-file handling in CreateFileW. Defined
+// in C# kernel side (FileSystemPolicy.cs + ConsoleWin32.cs).
+extern "C" int      SharpOSHost_ClassifyConsoleFileName(const uint8_t* utf8Name, int len);
+extern "C" uint64_t SharpOSHost_GetStdHandle(int nStdHandle);
+
+// Forward decls + DirHandle (CreateFileW backup-semantics → directory handle
+// for NtQueryDirectoryFile). The full kernel-side helpers live further down
+// in the file (sharpos_wpath_to_ascii @3773, SharpOSHost_GetFileAttributes
+// extern @3767); these forwards just allow CreateFileW to use them inline.
+extern "C" uint32_t SharpOSHost_GetFileAttributes(const uint8_t* utf8Path);
+static int sharpos_wpath_to_ascii(const wchar_t* w, uint8_t* out, int outCap);
+
+#define SHARPOS_DIR_HANDLE_MAGIC 0xD12C0DE5D1240E5DULL
+
+struct DirHandle {
+    uint64_t magic;          // 0x00 — SHARPOS_DIR_HANDLE_MAGIC
+    uint8_t  dirAscii[260];  // 0x08 — directory path (NUL-terminated)
+    uint32_t nextIndex;      // index for next entry
+    uint32_t exhausted;      // 1 once kernel reported no-more
+};
+
+// Heap-pointer sanity guard before dereferencing the handle for a magic
+// check. Some Win32 stubs return small integer "sentinel" handles (e.g.
+// HKEY values 0x4D from our registry shim). Without this guard a stray
+// CloseHandle(0x4D) would page-fault on *(uint64_t*)0x4D.
+static bool sharpos_is_dir_handle(void* h) {
+    uintptr_t v = (uintptr_t)h;
+    if (v < 0x100000ULL) return false;                  // small int sentinel
+    if (v >= 0x800000000000ULL) return false;           // non-canonical
+    if (h == (void*)(intptr_t)-1) return false;         // INVALID_HANDLE_VALUE
+    return *(uint64_t*)h == SHARPOS_DIR_HANDLE_MAGIC;
+}
+
 extern "C" void* CreateFileW(const wchar_t* lpFileName,
                               uint32_t dwDesiredAccess,
                               uint32_t /*dwShareMode*/,
                               void* /*lpSecurityAttrs*/,
                               uint32_t /*dwCreationDisposition*/,
-                              uint32_t /*dwFlagsAndAttributes*/,
+                              uint32_t dwFlagsAndAttributes,
                               void* /*hTemplateFile*/) {
     TRACE_REAL(CreateFileW);
+    // step126.6: console pseudo-files. Classification ("is this a CONOUT$,
+    // CONIN$, CONERR$ name") lives in kernel C# (FileSystemPolicy). Shim
+    // converts wide name → UTF-8 bytes, asks kernel, then maps result to
+    // the std-handle sentinel (which itself comes from
+    // SharpOSHost_GetStdHandle defined in ConsoleWin32.cs).
+    if (lpFileName != nullptr) {
+        uint8_t nameBuf[16];
+        int nameLen = 0;
+        for (int i = 0; i < 15 && lpFileName[i] != 0; i++) {
+            nameBuf[i] = (uint8_t)(lpFileName[i] & 0xFF);
+            nameLen++;
+        }
+        nameBuf[nameLen] = 0;
+        int kind = SharpOSHost_ClassifyConsoleFileName(nameBuf, nameLen);
+        if (kind == 1) {  // CONOUT$ / CONERR$
+            uint64_t h = SharpOSHost_GetStdHandle(-11);  // STD_OUTPUT_HANDLE
+            g_LastError = 0;
+            return (void*)(uintptr_t)h;
+        }
+        if (kind == 2) {  // CONIN$
+            uint64_t h = SharpOSHost_GetStdHandle(-10);  // STD_INPUT_HANDLE
+            g_LastError = 0;
+            return (void*)(uintptr_t)h;
+        }
+    }
     // Reject write/append/delete — read-only host FS access.
     if (dwDesiredAccess & 0x40000000u /*GENERIC_WRITE*/) {
         g_LastError = 5 /*ERROR_ACCESS_DENIED*/;
         return HANDLE_INVALID;
+    }
+    // Local hex formatter — print a uint64 via DebugPrintForced one char at
+    // a time. We intentionally don't use SharpOSHost_DebugPrintHex here:
+    // bypassing its Verbose gate would open the floodgates for every other
+    // hex-print call site in the fork.
+    auto probe_hex = [](uint64_t v) {
+        char buf[19] = "0x0000000000000000";
+        for (int i = 17; i >= 2; i--) {
+            int nib = (int)(v & 0xF);
+            buf[i] = (char)(nib < 10 ? ('0' + nib) : ('A' + nib - 10));
+            v >>= 4;
+        }
+        SharpOSHost_DebugPrintForced(buf);
+    };
+
+    // Diagnostic probe — detect the "\sharpos\C:\sharpos\..." doubled path
+    // and dump the return-address chain. Lets us symbolize who in BCL/PS
+    // constructs the bad string.
+    if (lpFileName != nullptr) {
+        const wchar_t* p = lpFileName;
+        // Pattern start: "\sharpos\C:" or "C:\sharpos\C:\sharpos\..."
+        // Quick check — scan for "C:\sharpos\C:" or "\sharpos\C:".
+        int matched = 0;
+        for (int i = 0; p[i] != 0 && i < 256; i++) {
+            if (p[i] == L's' && p[i+1] == L'h' && p[i+2] == L'a' && p[i+3] == L'r'
+             && p[i+4] == L'p' && p[i+5] == L'o' && p[i+6] == L's' && p[i+7] == L'\\'
+             && p[i+8] == L'C' && p[i+9] == L':' && p[i+10] == L'\\') {
+                matched = 1;
+                break;
+            }
+        }
+        static int s_probeFired = 0;
+        if (matched && s_probeFired < 1) {
+            s_probeFired++;
+            SharpOSHost_DebugPrintForced("[probe-dup-path] path=\"");
+            for (int i = 0; p[i] != 0 && i < 256; i++) {
+                uint8_t c = (uint8_t)(p[i] & 0xFF);
+                char buf[2] = { (char)c, 0 };
+                SharpOSHost_DebugPrintForced(buf);
+            }
+            SharpOSHost_DebugPrintForced("\"\n");
+            // Walk rbp chain: each frame stores caller's saved rbp at [rbp]
+            // and caller's return address at [rbp+8]. Prints up to 8 frames
+            // upward — symbolize via llvm-symbolizer against the right module.
+            SharpOSHost_DebugPrintForced("[probe-dup-path] ra0=0x");
+            probe_hex((uint64_t)__builtin_return_address(0));
+            SharpOSHost_DebugPrintForced("\n");
+            // Walk via __builtin_frame_address. *fp = saved caller rbp,
+            // *(fp+1) = caller return address.
+            uint64_t* rbp = (uint64_t*)__builtin_frame_address(0);
+            // Step up one to caller's frame.
+            if (rbp != nullptr) rbp = (uint64_t*)rbp[0];
+            for (int level = 1; level <= 4 && rbp != nullptr; level++) {
+                // Sanity: rbp must look like a stack pointer (canonical).
+                uint64_t v = (uint64_t)rbp;
+                if (v < 0x10000 || v > 0x7fffffffffffull) break;
+                uint64_t ra = rbp[1];
+                char head[28] = "[probe-dup-path] raN=0x";
+                head[19] = (char)('0' + level);
+                SharpOSHost_DebugPrintForced(head);
+                probe_hex(ra);
+                SharpOSHost_DebugPrintForced("\n");
+                rbp = (uint64_t*)rbp[0];
+            }
+            // Fallback: stack dump (FPO functions don't preserve rbp). Print
+            // top 24 qwords from our current rsp — caller RIPs land somewhere
+            // in that range. Filter by image base ranges during symbolize.
+            uint64_t* sp = (uint64_t*)__builtin_frame_address(0);
+            SharpOSHost_DebugPrintForced("[probe-dup-path] stack-dump from rsp:\n");
+            for (int i = 0; i < 12; i++) {
+                uint64_t v = sp[i];
+                SharpOSHost_DebugPrintForced("  [+"); probe_hex((uint64_t)(i*8));
+                SharpOSHost_DebugPrintForced("] "); probe_hex(v);
+                SharpOSHost_DebugPrintForced("\n");
+            }
+        }
+    }
+    // BCL FileSystemEnumerator.Windows opens a directory handle via
+    //   CreateFileW(dir, GENERIC_READ, ..., FILE_FLAG_BACKUP_SEMANTICS)
+    // and then walks it with NtQueryDirectoryFile. Only the explicit flag
+    // triggers DirHandle alloc — avoiding the attribute-probe fallback that
+    // false-positived on regular .dll file opens last time.
+    if (dwFlagsAndAttributes & 0x02000000u /*FILE_FLAG_BACKUP_SEMANTICS*/) {
+        DirHandle* d = (DirHandle*)SharpOSHost_HeapAlloc(sizeof(DirHandle));
+        if (d == nullptr) { g_LastError = 8; return HANDLE_INVALID; }
+        for (int i = 0; i < (int)sizeof(DirHandle); i++) ((uint8_t*)d)[i] = 0;
+        d->magic = SHARPOS_DIR_HANDLE_MAGIC;
+        int pn = sharpos_wpath_to_ascii(lpFileName, d->dirAscii, sizeof(d->dirAscii));
+        if (pn < 0) {
+            SharpOSHost_HeapFree(d);
+            g_LastError = 87;
+            return HANDLE_INVALID;
+        }
+        g_LastError = 0;
+        return (void*)d;
     }
     void* h = SharpOSHost_FileOpen(lpFileName);
     if (!h) {
@@ -2167,6 +2511,110 @@ extern "C" uint32_t SetFilePointer(void* hFile, int32_t lDistanceToMove,
     return (uint32_t)(result & 0xFFFFFFFFu);
 }
 CRT_REAL(SetFilePointer);
+
+// SetFilePointerEx — 64-bit variant; BCL FileStream.Seek and modern paths
+// use this instead of the 32-bit SetFilePointer.
+extern "C" int SetFilePointerEx(void* hFile, int64_t liDistanceToMove,
+                                 int64_t* lpNewFilePointer, uint32_t dwMoveMethod) {
+    TRACE_REAL(SetFilePointerEx);
+    int64_t result = SharpOSHost_FileSetPosition(hFile, liDistanceToMove, dwMoveMethod);
+    if (result < 0) {
+        g_LastError = 23 /*ERROR_INVALID_FUNCTION*/;
+        return 0;
+    }
+    if (lpNewFilePointer) *lpNewFilePointer = result;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SetFilePointerEx);
+
+// GetFileInformationByHandleEx — BCL FileInfo.Length / Get-Content / Get-ChildItem
+// detail rendering all funnel through this. Three info classes cover the
+// 99% surface PS hits: FileBasicInfo (times/attrs), FileStandardInfo (size,
+// directory bit), FileAttributeTagInfo (attrs + reparse tag).
+extern "C" int GetFileInformationByHandleEx(void* hFile,
+                                             int32_t FileInformationClass,
+                                             void* lpFileInformation,
+                                             uint32_t dwBufferSize) {
+    TRACE_REAL(GetFileInformationByHandleEx);
+    if (lpFileInformation == nullptr) { g_LastError = 87; return 0; }
+
+    bool isDir = sharpos_is_dir_handle(hFile);
+    uint32_t fileSize = 0;
+    if (!isDir && hFile != nullptr && hFile != (void*)(intptr_t)-1) {
+        fileSize = SharpOSHost_FileGetSize(hFile);
+        // SharpOSHost_FileGetSize returns 0 on unknown handle — that's fine
+        // for our purposes (PS sees size 0 rather than throwing).
+    }
+    uint8_t* p = (uint8_t*)lpFileInformation;
+
+    if (FileInformationClass == 0 /*FileBasicInfo*/) {
+        // 4× FILETIME (i64) + DWORD FileAttributes + 4 pad = 0x28
+        if (dwBufferSize < 0x28) { g_LastError = 122 /*ERROR_INSUFFICIENT_BUFFER*/; return 0; }
+        for (int i = 0; i < 0x28; i++) p[i] = 0;
+        *(uint32_t*)(p + 0x20) = isDir ? 0x10u /*DIRECTORY*/ : 0x80u /*NORMAL*/;
+        g_LastError = 0;
+        return 1;
+    }
+    if (FileInformationClass == 1 /*FileStandardInfo*/) {
+        // i64 AllocationSize, i64 EndOfFile, DWORD NumberOfLinks,
+        // BOOLEAN DeletePending, BOOLEAN Directory + pad = 0x18
+        if (dwBufferSize < 0x18) { g_LastError = 122; return 0; }
+        for (int i = 0; i < 0x18; i++) p[i] = 0;
+        *(uint64_t*)(p + 0x00) = fileSize;
+        *(uint64_t*)(p + 0x08) = fileSize;
+        *(uint32_t*)(p + 0x10) = 1;          // NumberOfLinks
+        p[0x14] = 0;                          // DeletePending
+        p[0x15] = isDir ? 1 : 0;              // Directory
+        g_LastError = 0;
+        return 1;
+    }
+    if (FileInformationClass == 9 /*FileAttributeTagInfo*/) {
+        if (dwBufferSize < 8) { g_LastError = 122; return 0; }
+        *(uint32_t*)(p + 0x00) = isDir ? 0x10u : 0x80u;
+        *(uint32_t*)(p + 0x04) = 0;           // ReparseTag
+        g_LastError = 0;
+        return 1;
+    }
+    g_LastError = 50 /*ERROR_NOT_SUPPORTED*/;
+    return 0;
+}
+CRT_REAL(GetFileInformationByHandleEx);
+
+// FillConsoleOutputCharacterW / FillConsoleOutputCharacterA / FillConsoleOutputAttribute:
+// Clear-Host (and other PS UX paths) draw spaces over the buffer to clear it.
+// Our UART doesn't have a buffer to overwrite; succeed silently so the host
+// doesn't throw. The cursor still moves via SetConsoleCursorPosition + the
+// terminal's own scroll, which is enough for usable shell output.
+extern "C" int FillConsoleOutputCharacterW(void* /*hConsole*/, wchar_t /*cChar*/,
+                                            uint32_t nLength, uint32_t /*dwCoord*/,
+                                            uint32_t* lpNumberWritten) {
+    TRACE_REAL(FillConsoleOutputCharacterW);
+    if (lpNumberWritten) *lpNumberWritten = nLength;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(FillConsoleOutputCharacterW);
+
+extern "C" int FillConsoleOutputCharacterA(void* /*hConsole*/, char /*cChar*/,
+                                            uint32_t nLength, uint32_t /*dwCoord*/,
+                                            uint32_t* lpNumberWritten) {
+    TRACE_REAL(FillConsoleOutputCharacterA);
+    if (lpNumberWritten) *lpNumberWritten = nLength;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(FillConsoleOutputCharacterA);
+
+extern "C" int FillConsoleOutputAttribute(void* /*hConsole*/, uint16_t /*wAttr*/,
+                                           uint32_t nLength, uint32_t /*dwCoord*/,
+                                           uint32_t* lpNumberWritten) {
+    TRACE_REAL(FillConsoleOutputAttribute);
+    if (lpNumberWritten) *lpNumberWritten = nLength;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(FillConsoleOutputAttribute);
 
 extern "C" uint32_t GetFileSize(void* hFile, uint32_t* lpFileSizeHigh) {
     TRACE_REAL(GetFileSize);
@@ -2271,6 +2719,132 @@ extern "C" int NtQuerySystemInformation(int SystemInformationClass,
     return STATUS_NOT_IMPLEMENTED;
 }
 CRT_REAL(NtQuerySystemInformation);
+
+// NtQueryDirectoryFile — Windows BCL FileSystemEnumerator's directory walker.
+// Wraps our SharpOSHost_FindDirEntry into the FILE_FULL_DIR_INFORMATION
+// stream format. PowerShell's module discovery and most BCL Directory.* APIs
+// land here on Windows-shape.
+//
+// Layout of FILE_FULL_DIR_INFORMATION (0x44 byte header + name):
+//   +0x00 NextEntryOffset  uint32  (0 on last entry; aligned to 8)
+//   +0x04 FileIndex        uint32
+//   +0x08 CreationTime     int64
+//   +0x10 LastAccessTime   int64
+//   +0x18 LastWriteTime    int64
+//   +0x20 ChangeTime       int64
+//   +0x28 EndOfFile        int64
+//   +0x30 AllocationSize   int64
+//   +0x38 FileAttributes   uint32
+//   +0x3C FileNameLength   uint32  (in BYTES, not chars)
+//   +0x40 EaSize           uint32
+//   +0x44 FileName[]       WCHAR[FileNameLength/2]
+//
+// FileInformationClass values we handle:
+//   FileFullDirectoryInformation     = 2  (primary, BCL uses this)
+//   FileBothDirectoryInformation     = 3  (alternate, same layout for our use)
+//   FileFullDirectoryInformationEx   = 60 (newer variant, same shape)
+//   FileDirectoryInformation         = 1  (no EaSize, but BCL doesn't ask for it)
+// Anything else → STATUS_NOT_IMPLEMENTED (0xC0000002).
+extern "C" int32_t NtQueryDirectoryFile(
+    void* FileHandle,
+    void* /*Event*/,
+    void* /*ApcRoutine*/,
+    void* /*ApcContext*/,
+    void* IoStatusBlock,
+    void* FileInformation,
+    uint32_t Length,
+    int32_t FileInformationClass,
+    uint8_t ReturnSingleEntry,
+    void* /*FileName*/,        // FileName mask (e.g. "*.dll") — ignore, return all
+    uint8_t RestartScan)
+{
+    const int32_t STATUS_SUCCESS         = 0;
+    const int32_t STATUS_INVALID_HANDLE  = (int32_t)0xC0000008;
+    const int32_t STATUS_BUFFER_TOO_SMALL= (int32_t)0xC0000023;
+    const int32_t STATUS_NOT_IMPLEMENTED = (int32_t)0xC0000002;
+    const int32_t STATUS_NO_MORE_FILES   = (int32_t)0x80000006;
+
+    if (!sharpos_is_dir_handle(FileHandle)) return STATUS_INVALID_HANDLE;
+    DirHandle* d = (DirHandle*)FileHandle;
+
+    if (FileInformationClass != 1 && FileInformationClass != 2
+     && FileInformationClass != 3 && FileInformationClass != 60)
+        return STATUS_NOT_IMPLEMENTED;
+
+    if (RestartScan) { d->nextIndex = 0; d->exhausted = 0; }
+
+    if (FileInformation == nullptr || Length < 0x48) return STATUS_BUFFER_TOO_SMALL;
+
+    uint8_t* buf = (uint8_t*)FileInformation;
+    uint8_t* lastEntry = nullptr;
+    uint32_t written = 0;
+    uint32_t entries = 0;
+
+    while (!d->exhausted) {
+        wchar_t nameBuf[260];
+        uint32_t attrs = 0;
+        uint32_t nameLen = SharpOSHost_FindDirEntry(d->dirAscii, d->nextIndex,
+                                                     nameBuf, 260, &attrs);
+        if (nameLen == 0) { d->exhausted = 1; break; }
+
+        // Skip "." and ".." synthetics — BCL's enumerator filters them out
+        // anyway, but our FAT doesn't emit them. If a future emit adds
+        // them, the line below stays a no-op.
+        uint32_t nameBytes = nameLen * 2;
+        uint32_t entrySize = 0x44 + nameBytes;
+        entrySize = (entrySize + 7) & ~7u;
+
+        if (written + entrySize > Length) {
+            if (entries == 0) return STATUS_BUFFER_TOO_SMALL;
+            break;   // doesn't fit — leave nextIndex pointing at this entry
+        }
+
+        // Commit the entry.
+        uint8_t* p = buf + written;
+        for (int i = 0; i < (int)entrySize; i++) p[i] = 0;
+        *(uint32_t*)(p + 0x00) = entrySize;            // NextEntryOffset (fixed up later if last)
+        *(uint32_t*)(p + 0x04) = d->nextIndex;         // FileIndex
+        *(uint32_t*)(p + 0x38) = attrs;                // FileAttributes
+        *(uint32_t*)(p + 0x3C) = nameBytes;            // FileNameLength (bytes)
+        wchar_t* nameDst = (wchar_t*)(p + 0x44);
+        for (uint32_t i = 0; i < nameLen; i++) nameDst[i] = nameBuf[i];
+
+        lastEntry = p;
+        written += entrySize;
+        entries++;
+        d->nextIndex++;
+        if (ReturnSingleEntry) break;
+    }
+
+    if (entries == 0) {
+        if (IoStatusBlock != nullptr) {
+            ((uint64_t*)IoStatusBlock)[0] = (uint64_t)(uint32_t)STATUS_NO_MORE_FILES;
+            ((uint64_t*)IoStatusBlock)[1] = 0;
+        }
+        return STATUS_NO_MORE_FILES;
+    }
+
+    if (lastEntry != nullptr) *(uint32_t*)(lastEntry + 0x00) = 0;
+
+    if (IoStatusBlock != nullptr) {
+        ((uint64_t*)IoStatusBlock)[0] = STATUS_SUCCESS;
+        ((uint64_t*)IoStatusBlock)[1] = written;
+    }
+    return STATUS_SUCCESS;
+}
+CRT_REAL(NtQueryDirectoryFile);
+
+// NtClose — ntdll handle release. Mirrors CloseHandle's DirHandle dispatch.
+extern "C" int32_t NtClose(void* h) {
+    TRACE_REAL(NtClose);
+    if (sharpos_is_dir_handle(h)) {
+        SharpOSHost_HeapFree(h);
+        return 0;
+    }
+    SharpOSHost_CloseHandle((uint64_t)(uintptr_t)h);
+    return 0;
+}
+CRT_REAL(NtClose);
 
 // RtlCaptureContext — capture caller-state CPU registers into a CONTEXT
 // struct. Win64 ABI: arg in RCX = PCONTEXT.
@@ -2940,6 +3514,17 @@ extern "C" int32_t RtlGetVersion(void* lpVersionInformation) {
 }
 CRT_REAL(RtlGetVersion);
 
+// CHAR NTAPI RtlQueryProcessPlaceholderCompatibilityMode(VOID)
+// Used by .NET FileSystem provider startup to detect cloud-file /
+// placeholder mode. We have neither concept, so return PHCM_APPLICATION_DEFAULT
+// (0). Without this stub, PowerShell's FileSystem provider fails to start →
+// Get-ChildItem / Set-Location / FileSystem PSDrive cmdlets unavailable.
+extern "C" char RtlQueryProcessPlaceholderCompatibilityMode(void) {
+    TRACE_REAL(RtlQueryProcessPlaceholderCompatibilityMode);
+    return 0;  // PHCM_APPLICATION_DEFAULT
+}
+CRT_REAL(RtlQueryProcessPlaceholderCompatibilityMode);
+
 extern "C" int GetVersionExW(void* lpVersionInformation) {
     TRACE_REAL(GetVersionExW);
     return RtlGetVersion(lpVersionInformation) == 0 ? 1 : 0;
@@ -3316,6 +3901,24 @@ static int sharpos_wpath_to_ascii(const wchar_t* w, uint8_t* out, int outCap) {
     }
 }
 
+// Probe helpers — print wide path char-by-char + hex value via DebugPrintForced.
+static void probe_print_wpath(const wchar_t* w) {
+    if (w == nullptr) { SharpOSHost_DebugPrintForced("<null>"); return; }
+    for (int i = 0; i < 256 && w[i] != 0; i++) {
+        char b[2] = { (char)(w[i] & 0xFF), 0 };
+        SharpOSHost_DebugPrintForced(b);
+    }
+}
+static void probe_print_hex(uint64_t v) {
+    char buf[19] = "0x0000000000000000";
+    for (int i = 17; i >= 2; i--) {
+        int nib = (int)(v & 0xF);
+        buf[i] = (char)(nib < 10 ? ('0' + nib) : ('A' + nib - 10));
+        v >>= 4;
+    }
+    SharpOSHost_DebugPrintForced(buf);
+}
+
 // GetFileAttributesW (no Ex) -- BCL Directory.Exists / older paths use
 // this. Returns the DWORD attributes bitmask or 0xFFFFFFFF on error.
 extern "C" uint32_t GetFileAttributesW(const wchar_t* lpFileName) {
@@ -3327,10 +3930,18 @@ extern "C" uint32_t GetFileAttributesW(const wchar_t* lpFileName) {
     uint8_t path[260];
     int n = sharpos_wpath_to_ascii(lpFileName, path, sizeof(path));
     if (n < 0) {
+        SharpOSHost_DebugPrintForced("[probe-fs] GetFileAttributesW path=\"");
+        probe_print_wpath(lpFileName);
+        SharpOSHost_DebugPrintForced("\" → non-ASCII path → INVALID\n");
         g_LastError = k_ERROR_FILE_NOT_FOUND;
         return 0xFFFFFFFFu;
     }
     uint32_t attr = SharpOSHost_GetFileAttributes(path);
+    SharpOSHost_DebugPrintForced("[probe-fs] GetFileAttributesW path=\"");
+    probe_print_wpath(lpFileName);
+    SharpOSHost_DebugPrintForced("\" → attr=");
+    probe_print_hex(attr);
+    SharpOSHost_DebugPrintForced("\n");
     if (attr == 0xFFFFFFFFu) {
         g_LastError = k_ERROR_FILE_NOT_FOUND;
         return 0xFFFFFFFFu;
@@ -3347,32 +3958,138 @@ CRT_REAL(GetFileAttributesW);
 // interprets that as "no matches" and yields empty enumeration -- the
 // probe passes since it only iterates, not inspects results.
 static void* k_INVALID_HANDLE_VALUE = (void*)(intptr_t)-1;
-extern "C" void* FindFirstFileW(const wchar_t* /*lpFileName*/, void* /*lpFindFileData*/) {
+
+// DirHandle struct + magic + is_dir_handle helper live above CreateFileW
+// (see ~line 2295) so all directory-handle dispatch sites share one defn.
+
+// Win32 WIN32_FIND_DATAW layout (592 bytes):
+//   0x000 DWORD    dwFileAttributes
+//   0x004 FILETIME ftCreationTime    (8)
+//   0x00C FILETIME ftLastAccessTime  (8)
+//   0x014 FILETIME ftLastWriteTime   (8)
+//   0x01C DWORD    nFileSizeHigh
+//   0x020 DWORD    nFileSizeLow
+//   0x024 DWORD    dwReserved0
+//   0x028 DWORD    dwReserved1
+//   0x02C WCHAR    cFileName[260]
+//   0x234 WCHAR    cAlternateFileName[14]
+//   0x250 end
+struct DirIterState {
+    uint8_t  dirAscii[260];  // directory path (UTF-8 / ASCII, NUL-terminated)
+    uint32_t nextIndex;      // index for the NEXT FindNext call
+    uint32_t exhausted;      // 1 once the kernel said "no more"
+};
+
+// Take a search pattern like "C:\foo\bar\*" and split into directory path
+// "C:\foo\bar" (stored ASCII into dst). Returns dir length or -1 on failure.
+static int sharpos_split_pattern_dir(const wchar_t* pattern, uint8_t* dst, int dstCap) {
+    if (pattern == nullptr || dst == nullptr) return -1;
+    // Find last separator.
+    int lastSep = -1;
+    int len = 0;
+    for (; pattern[len] != 0 && len < 1024; len++) {
+        if (pattern[len] == L'\\' || pattern[len] == L'/') lastSep = len;
+    }
+    int dirLen;
+    if (lastSep < 0) {
+        // No separator — treat whole thing as dir name (rare).
+        dirLen = len;
+    } else if (lastSep == 0) {
+        // Pattern was "\X" — dir is just "\".
+        dst[0] = '\\'; dst[1] = 0; return 1;
+    } else {
+        dirLen = lastSep;
+    }
+    if (dirLen >= dstCap) return -1;
+    for (int i = 0; i < dirLen; i++) {
+        wchar_t c = pattern[i];
+        if (c > 0x7F) return -1;  // non-ASCII path — bail
+        dst[i] = (uint8_t)c;
+    }
+    dst[dirLen] = 0;
+    return dirLen;
+}
+
+// Populate WIN32_FIND_DATAW from a single entry name + attributes.
+static void sharpos_fill_find_data(void* lpFindFileData, uint32_t attrs,
+                                    const wchar_t* name, int nameLen) {
+    if (lpFindFileData == nullptr) return;
+    uint8_t* p = (uint8_t*)lpFindFileData;
+    for (int i = 0; i < 0x250; i++) p[i] = 0;
+    *(uint32_t*)(p + 0x000) = attrs;
+    wchar_t* cName = (wchar_t*)(p + 0x02C);
+    int copy = nameLen;
+    if (copy > 259) copy = 259;
+    for (int i = 0; i < copy; i++) cName[i] = name[i];
+    cName[copy] = 0;
+}
+
+// Step the iterator: call kernel, write FIND_DATA. Returns true on success.
+static bool sharpos_iter_step(DirIterState* st, void* lpFindFileData) {
+    if (st == nullptr || st->exhausted) return false;
+    wchar_t nameBuf[260];
+    uint32_t attrs = 0;
+    uint32_t nameLen = SharpOSHost_FindDirEntry(st->dirAscii, st->nextIndex,
+                                                 nameBuf, 260, &attrs);
+    st->nextIndex++;
+    if (nameLen == 0) { st->exhausted = 1; return false; }
+    sharpos_fill_find_data(lpFindFileData, attrs, nameBuf, (int)nameLen);
+    return true;
+}
+
+extern "C" void* FindFirstFileW(const wchar_t* lpFileName, void* lpFindFileData) {
     TRACE_REAL(FindFirstFileW);
-    g_LastError = k_ERROR_FILE_NOT_FOUND;
-    return k_INVALID_HANDLE_VALUE;
+    DirIterState* st = (DirIterState*)SharpOSHost_HeapAlloc(sizeof(DirIterState));
+    if (st == nullptr) {
+        g_LastError = 8;  // ERROR_NOT_ENOUGH_MEMORY
+        return k_INVALID_HANDLE_VALUE;
+    }
+    for (int i = 0; i < (int)sizeof(DirIterState); i++) ((uint8_t*)st)[i] = 0;
+    if (sharpos_split_pattern_dir(lpFileName, st->dirAscii, sizeof(st->dirAscii)) < 0) {
+        SharpOSHost_HeapFree(st);
+        g_LastError = k_ERROR_FILE_NOT_FOUND;
+        return k_INVALID_HANDLE_VALUE;
+    }
+    st->nextIndex = 0;
+    if (!sharpos_iter_step(st, lpFindFileData)) {
+        SharpOSHost_HeapFree(st);
+        g_LastError = k_ERROR_FILE_NOT_FOUND;
+        return k_INVALID_HANDLE_VALUE;
+    }
+    g_LastError = 0;
+    return (void*)st;
 }
 CRT_REAL(FindFirstFileW);
 
-extern "C" void* FindFirstFileExW(const wchar_t* /*lpFileName*/, int /*fInfoLevelId*/,
-                                  void* /*lpFindFileData*/, int /*fSearchOp*/,
+extern "C" void* FindFirstFileExW(const wchar_t* lpFileName, int /*fInfoLevelId*/,
+                                  void* lpFindFileData, int /*fSearchOp*/,
                                   void* /*lpSearchFilter*/, uint32_t /*dwAdditionalFlags*/) {
     TRACE_REAL(FindFirstFileExW);
-    g_LastError = k_ERROR_FILE_NOT_FOUND;
-    return k_INVALID_HANDLE_VALUE;
+    return FindFirstFileW(lpFileName, lpFindFileData);
 }
 CRT_REAL(FindFirstFileExW);
 
-extern "C" int FindNextFileW(void* /*hFindFile*/, void* /*lpFindFileData*/) {
+extern "C" int FindNextFileW(void* hFindFile, void* lpFindFileData) {
     TRACE_REAL(FindNextFileW);
     static const uint32_t k_ERROR_NO_MORE_FILES = 18;
-    g_LastError = k_ERROR_NO_MORE_FILES;
-    return 0;
+    if (hFindFile == nullptr || hFindFile == k_INVALID_HANDLE_VALUE) {
+        g_LastError = 6;  // ERROR_INVALID_HANDLE
+        return 0;
+    }
+    DirIterState* st = (DirIterState*)hFindFile;
+    if (!sharpos_iter_step(st, lpFindFileData)) {
+        g_LastError = k_ERROR_NO_MORE_FILES;
+        return 0;
+    }
+    g_LastError = 0;
+    return 1;
 }
 CRT_REAL(FindNextFileW);
 
-extern "C" int FindClose(void* /*hFindFile*/) {
+extern "C" int FindClose(void* hFindFile) {
     TRACE_REAL(FindClose);
+    if (hFindFile != nullptr && hFindFile != k_INVALID_HANDLE_VALUE)
+        SharpOSHost_HeapFree(hFindFile);
     g_LastError = 0;
     return 1;
 }
@@ -3391,8 +4108,19 @@ extern "C" int GetFileAttributesExW(const wchar_t* lpFileName, int /*fInfoLevelI
     }
     uint8_t path[260];
     int n = sharpos_wpath_to_ascii(lpFileName, path, sizeof(path));
-    if (n < 0) { g_LastError = k_ERROR_FILE_NOT_FOUND; return 0; }
+    if (n < 0) {
+        SharpOSHost_DebugPrintForced("[probe-fs] GetFileAttributesExW path=\"");
+        probe_print_wpath(lpFileName);
+        SharpOSHost_DebugPrintForced("\" → non-ASCII → 0\n");
+        g_LastError = k_ERROR_FILE_NOT_FOUND;
+        return 0;
+    }
     uint32_t attr = SharpOSHost_GetFileAttributes(path);
+    SharpOSHost_DebugPrintForced("[probe-fs] GetFileAttributesExW path=\"");
+    probe_print_wpath(lpFileName);
+    SharpOSHost_DebugPrintForced("\" → attr=");
+    probe_print_hex(attr);
+    SharpOSHost_DebugPrintForced("\n");
     if (attr == 0xFFFFFFFFu) { g_LastError = k_ERROR_FILE_NOT_FOUND; return 0; }
     uint8_t* p = (uint8_t*)lpFileInformation;
     for (int i = 0; i < 36; i++) p[i] = 0;
@@ -3407,6 +4135,1082 @@ CRT_REAL(GetCommandLineW);
 
 extern "C" uint32_t GetConsoleOutputCP(void) { TRACE_REAL(GetConsoleOutputCP); return 437; }
 CRT_REAL(GetConsoleOutputCP);
+
+// ─── step125: advapi32 Registry — thin marshal to kernel C# ────────────
+// All policy and state live in OS/src/PAL/SharpOSHost/Registry.cs
+// (SharpOSHost_Reg* exports). The fork side just:
+//   - widens HKEY parameter to uint64_t
+//   - converts wide subKey/valueName to bounded UTF-8 byte buffer
+//     (registry paths are ASCII in practice)
+//   - forwards the call
+//   - propagates LSTATUS into both return value and g_LastError
+// Per SharpOS invariant: no decisions here ("does this key exist", "what
+// error", "which roots are valid"). All of that is in the C# side.
+
+// Kernel-side exports take 64-bit HKEY values (we cast void*→uint64_t at
+// the shim boundary) and integer params as uint32_t for predictability.
+// The C# side handles the bit-width differences.
+extern "C" int SharpOSHost_RegOpenKey(uint64_t hKey, const uint8_t* subKey,
+                                       int subKeyLen, uint64_t* phkResult);
+extern "C" int SharpOSHost_RegCloseKey(uint64_t hKey);
+extern "C" int SharpOSHost_RegQueryValue(uint64_t hKey, const uint8_t* valueName,
+                                          int valueNameLen, uint32_t* outType,
+                                          uint8_t* outData, uint32_t* outDataLen);
+extern "C" int SharpOSHost_RegEnumKey(uint64_t hKey, uint32_t dwIndex,
+                                       uint8_t* outName, uint32_t* outNameLen,
+                                       uint8_t* outClass, uint32_t* outClassLen,
+                                       int64_t* outLastWriteTime);
+extern "C" int SharpOSHost_RegEnumValue(uint64_t hKey, uint32_t dwIndex,
+                                         uint8_t* outName, uint32_t* outNameLen,
+                                         uint32_t* outType,
+                                         uint8_t* outData, uint32_t* outDataLen);
+extern "C" int SharpOSHost_RegQueryInfoKey(uint64_t hKey,
+                                            uint8_t* outClass, uint32_t* outClassLen,
+                                            uint32_t* outNumSubKeys, uint32_t* outMaxSubKeyLen,
+                                            uint32_t* outMaxClassLen,
+                                            uint32_t* outNumValues, uint32_t* outMaxValueNameLen,
+                                            uint32_t* outMaxValueDataLen,
+                                            uint32_t* outSecurityDescriptor,
+                                            int64_t* outLastWriteTime);
+extern "C" int SharpOSHost_RegCreateKey(uint64_t hKey, const uint8_t* subKey,
+                                         int subKeyLen, uint32_t reserved,
+                                         const uint8_t* keyClass, uint32_t options,
+                                         uint32_t samDesired, void* securityAttrs,
+                                         uint64_t* phkResult, uint32_t* outDisposition);
+extern "C" int SharpOSHost_RegFlushKey(uint64_t hKey);
+
+// Helper: zero-extend wide to UTF-8 byte buffer. Registry strings are
+// ASCII in practice; bounded copy avoids unbounded user input.
+static int sharpos_wide_to_bytes(const wchar_t* src, uint8_t* dst, int dstCap) {
+    if (src == nullptr || dst == nullptr || dstCap <= 0) return 0;
+    int i = 0;
+    while (i < dstCap - 1 && src[i] != 0) {
+        dst[i] = (uint8_t)(src[i] & 0xFF);
+        i++;
+    }
+    dst[i] = 0;
+    return i;
+}
+
+// Win32 SDK signatures: LSTATUS=long, HKEY=void*, DWORD=unsigned long,
+// REGSAM=DWORD, PHKEY=HKEY*. Must match advapi32 SDK declarations exactly
+// (winreg.h is transitively included) — otherwise C++ flags conflicting
+// types at link.
+
+extern "C" long RegOpenKeyExW(void* hKey, const wchar_t* lpSubKey,
+                               unsigned long /*ulOptions*/, unsigned long /*samDesired*/,
+                               void** phkResult) {
+    TRACE_REAL(RegOpenKeyExW);
+    uint8_t buf[260];
+    int len = sharpos_wide_to_bytes(lpSubKey, buf, (int)sizeof(buf));
+    uint64_t outHKey = 0;
+    int status = SharpOSHost_RegOpenKey((uint64_t)(uintptr_t)hKey, buf, len, &outHKey);
+    if (phkResult != nullptr) *phkResult = (void*)(uintptr_t)outHKey;
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegOpenKeyExW);
+
+extern "C" long RegCloseKey(void* hKey) {
+    TRACE_REAL(RegCloseKey);
+    int status = SharpOSHost_RegCloseKey((uint64_t)(uintptr_t)hKey);
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegCloseKey);
+
+extern "C" long RegQueryValueExW(void* hKey, const wchar_t* lpValueName,
+                                  unsigned long* /*lpReserved*/, unsigned long* lpType,
+                                  unsigned char* lpData, unsigned long* lpcbData) {
+    TRACE_REAL(RegQueryValueExW);
+    uint8_t buf[260];
+    int len = sharpos_wide_to_bytes(lpValueName, buf, (int)sizeof(buf));
+    uint32_t outType = 0;
+    uint32_t outDataLen = 0;
+    int status = SharpOSHost_RegQueryValue((uint64_t)(uintptr_t)hKey, buf, len,
+                                            &outType, lpData, &outDataLen);
+    if (lpType   != nullptr) *lpType   = (unsigned long)outType;
+    if (lpcbData != nullptr) *lpcbData = (unsigned long)outDataLen;
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegQueryValueExW);
+
+extern "C" long RegEnumKeyExW(void* hKey, unsigned long dwIndex,
+                               wchar_t* /*lpName*/, unsigned long* lpcchName,
+                               unsigned long* /*lpReserved*/,
+                               wchar_t* /*lpClass*/, unsigned long* lpcchClass,
+                               long long* lpftLastWriteTime) {
+    TRACE_REAL(RegEnumKeyExW);
+    uint32_t nameLen = 0, classLen = 0;
+    int64_t lwt = 0;
+    int status = SharpOSHost_RegEnumKey((uint64_t)(uintptr_t)hKey, (uint32_t)dwIndex,
+                                         nullptr, &nameLen,
+                                         nullptr, &classLen,
+                                         &lwt);
+    if (lpcchName  != nullptr) *lpcchName  = (unsigned long)nameLen;
+    if (lpcchClass != nullptr) *lpcchClass = (unsigned long)classLen;
+    if (lpftLastWriteTime != nullptr) *lpftLastWriteTime = lwt;
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegEnumKeyExW);
+
+extern "C" long RegEnumValueW(void* hKey, unsigned long dwIndex,
+                               wchar_t* /*lpValueName*/, unsigned long* lpcchValueName,
+                               unsigned long* /*lpReserved*/, unsigned long* lpType,
+                               unsigned char* lpData, unsigned long* lpcbData) {
+    TRACE_REAL(RegEnumValueW);
+    uint32_t nameLen = 0, outType = 0, outDataLen = 0;
+    int status = SharpOSHost_RegEnumValue((uint64_t)(uintptr_t)hKey, (uint32_t)dwIndex,
+                                           nullptr, &nameLen,
+                                           &outType, lpData, &outDataLen);
+    if (lpcchValueName != nullptr) *lpcchValueName = (unsigned long)nameLen;
+    if (lpType         != nullptr) *lpType         = (unsigned long)outType;
+    if (lpcbData       != nullptr) *lpcbData       = (unsigned long)outDataLen;
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegEnumValueW);
+
+extern "C" long RegQueryInfoKeyW(void* hKey,
+                                  wchar_t* /*lpClass*/, unsigned long* lpcchClass,
+                                  unsigned long* /*lpReserved*/,
+                                  unsigned long* lpcSubKeys, unsigned long* lpcbMaxSubKeyLen,
+                                  unsigned long* lpcbMaxClassLen,
+                                  unsigned long* lpcValues, unsigned long* lpcbMaxValueNameLen,
+                                  unsigned long* lpcbMaxValueLen,
+                                  unsigned long* lpcbSecurityDescriptor,
+                                  long long* lpftLastWriteTime) {
+    TRACE_REAL(RegQueryInfoKeyW);
+    uint32_t classLen = 0, numSubKeys = 0, maxSubKeyLen = 0, maxClassLen = 0;
+    uint32_t numValues = 0, maxValueNameLen = 0, maxValueLen = 0, securityDescriptor = 0;
+    int64_t lwt = 0;
+    int status = SharpOSHost_RegQueryInfoKey((uint64_t)(uintptr_t)hKey,
+                                              nullptr, &classLen,
+                                              &numSubKeys, &maxSubKeyLen, &maxClassLen,
+                                              &numValues, &maxValueNameLen, &maxValueLen,
+                                              &securityDescriptor,
+                                              &lwt);
+    if (lpcchClass             != nullptr) *lpcchClass             = (unsigned long)classLen;
+    if (lpcSubKeys             != nullptr) *lpcSubKeys             = (unsigned long)numSubKeys;
+    if (lpcbMaxSubKeyLen       != nullptr) *lpcbMaxSubKeyLen       = (unsigned long)maxSubKeyLen;
+    if (lpcbMaxClassLen        != nullptr) *lpcbMaxClassLen        = (unsigned long)maxClassLen;
+    if (lpcValues              != nullptr) *lpcValues              = (unsigned long)numValues;
+    if (lpcbMaxValueNameLen    != nullptr) *lpcbMaxValueNameLen    = (unsigned long)maxValueNameLen;
+    if (lpcbMaxValueLen        != nullptr) *lpcbMaxValueLen        = (unsigned long)maxValueLen;
+    if (lpcbSecurityDescriptor != nullptr) *lpcbSecurityDescriptor = (unsigned long)securityDescriptor;
+    if (lpftLastWriteTime      != nullptr) *lpftLastWriteTime      = lwt;
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegQueryInfoKeyW);
+
+extern "C" long RegCreateKeyExW(void* hKey, const wchar_t* lpSubKey,
+                                 unsigned long reserved, const wchar_t* lpClass,
+                                 unsigned long dwOptions, unsigned long samDesired,
+                                 void* lpSecurityAttributes, void** phkResult,
+                                 unsigned long* lpdwDisposition) {
+    TRACE_REAL(RegCreateKeyExW);
+    uint8_t subKeyBuf[260];
+    uint8_t classBuf[64];
+    int subKeyLen = sharpos_wide_to_bytes(lpSubKey, subKeyBuf, (int)sizeof(subKeyBuf));
+    sharpos_wide_to_bytes(lpClass, classBuf, (int)sizeof(classBuf));
+    uint64_t outHKey = 0;
+    uint32_t outDisposition = 0;
+    int status = SharpOSHost_RegCreateKey((uint64_t)(uintptr_t)hKey, subKeyBuf, subKeyLen,
+                                           (uint32_t)reserved,
+                                           classBuf, (uint32_t)dwOptions, (uint32_t)samDesired,
+                                           lpSecurityAttributes, &outHKey, &outDisposition);
+    if (phkResult       != nullptr) *phkResult       = (void*)(uintptr_t)outHKey;
+    if (lpdwDisposition != nullptr) *lpdwDisposition = (unsigned long)outDisposition;
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegCreateKeyExW);
+
+extern "C" long RegFlushKey(void* hKey) {
+    TRACE_REAL(RegFlushKey);
+    int status = SharpOSHost_RegFlushKey((uint64_t)(uintptr_t)hKey);
+    g_LastError = (uint32_t)status;
+    return (long)status;
+}
+CRT_REAL(RegFlushKey);
+
+// ─── step126: advapi32 Token/Privilege stubs (no logic, return failure) ──
+// ProcessManager::.cctor (Windows-impl System.Diagnostics.Process.dll)
+// tries to acquire SE_DEBUG_NAME privilege via OpenProcessToken +
+// LookupPrivilegeValueW + AdjustTokenPrivileges. On unikernel there are
+// no privileges/tokens — return controlled failure so cctor logs and
+// continues (BCL handles "can't adjust privilege" gracefully).
+//
+// Win32 error codes (WinError.h):
+//   ERROR_NO_SUCH_PRIVILEGE = 1313
+//   ERROR_NOT_ENOUGH_MEMORY = 8
+//   ERROR_INVALID_HANDLE = 6
+
+// Kernel-side policy lives in OS/src/PAL/SharpOSHost/TokenSecurity.cs.
+// Fork shims convert ABI shape and propagate kernel's error code → g_LastError
+// → BOOL return.
+extern "C" int  SharpOSHost_LookupPrivilegeValue(uint64_t* outLuid);
+extern "C" int  SharpOSHost_LookupPrivilegeName(unsigned long* outNameLen);
+extern "C" int  SharpOSHost_OpenProcessToken(void** outToken);
+extern "C" int  SharpOSHost_OpenThreadToken(void** outToken);
+extern "C" int  SharpOSHost_AdjustTokenPrivileges(void);
+extern "C" int  SharpOSHost_GetTokenInformation(unsigned long* outReturnLen);
+extern "C" int  SharpOSHost_ImpersonateLoggedOnUser(void);
+extern "C" int  SharpOSHost_RevertToSelf(void);
+extern "C" int  SharpOSHost_CheckTokenMembership(int* outIsMember);
+extern "C" int  SharpOSHost_DuplicateTokenEx(void** outNewToken);
+
+extern "C" int LookupPrivilegeValueW(const wchar_t* /*lpSystemName*/,
+                                      const wchar_t* /*lpName*/,
+                                      void* lpLuid) {
+    TRACE_REAL(LookupPrivilegeValueW);
+    int err = SharpOSHost_LookupPrivilegeValue((uint64_t*)lpLuid);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(LookupPrivilegeValueW);
+
+extern "C" int LookupPrivilegeNameW(const wchar_t* /*lpSystemName*/,
+                                     void* /*lpLuid*/,
+                                     wchar_t* /*lpName*/, unsigned long* lpcchName) {
+    TRACE_REAL(LookupPrivilegeNameW);
+    int err = SharpOSHost_LookupPrivilegeName(lpcchName);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(LookupPrivilegeNameW);
+
+extern "C" int OpenProcessToken(void* /*ProcessHandle*/,
+                                 unsigned long /*DesiredAccess*/,
+                                 void** TokenHandle) {
+    TRACE_REAL(OpenProcessToken);
+    int err = SharpOSHost_OpenProcessToken(TokenHandle);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(OpenProcessToken);
+
+extern "C" int OpenThreadToken(void* /*ThreadHandle*/,
+                                unsigned long /*DesiredAccess*/,
+                                int /*OpenAsSelf*/,
+                                void** TokenHandle) {
+    TRACE_REAL(OpenThreadToken);
+    int err = SharpOSHost_OpenThreadToken(TokenHandle);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(OpenThreadToken);
+
+extern "C" int AdjustTokenPrivileges(void* /*TokenHandle*/, int /*DisableAllPrivileges*/,
+                                      void* /*NewState*/, unsigned long /*BufferLength*/,
+                                      void* /*PreviousState*/, unsigned long* /*ReturnLength*/) {
+    TRACE_REAL(AdjustTokenPrivileges);
+    int err = SharpOSHost_AdjustTokenPrivileges();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(AdjustTokenPrivileges);
+
+extern "C" int GetTokenInformation(void* /*TokenHandle*/, int /*TokenInformationClass*/,
+                                    void* /*TokenInformation*/, unsigned long /*TokenInformationLength*/,
+                                    unsigned long* ReturnLength) {
+    TRACE_REAL(GetTokenInformation);
+    int err = SharpOSHost_GetTokenInformation(ReturnLength);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(GetTokenInformation);
+
+extern "C" int ImpersonateLoggedOnUser(void* /*hToken*/) {
+    TRACE_REAL(ImpersonateLoggedOnUser);
+    int err = SharpOSHost_ImpersonateLoggedOnUser();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(ImpersonateLoggedOnUser);
+
+extern "C" int RevertToSelf(void) {
+    TRACE_REAL(RevertToSelf);
+    int err = SharpOSHost_RevertToSelf();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(RevertToSelf);
+
+// SaferIdentifyLevel — Win32 Software Restriction Policy classifier. PS uses
+// it via System.Management.Automation.Security.SystemPolicy.GetAppLockerPolicy
+// to decide between FullLanguage and ConstrainedLanguage. On unikernel
+// there's no SRP; return success with SAFER_LEVELID_FULLYTRUSTED so the
+// shim's lpLevelHandle out-pointer carries that sentinel and PS treats
+// every script as fully trusted → FullLanguage → cmdlets register normally.
+#define SHARPOS_SAFER_LEVEL_FULLYTRUSTED  ((void*)(uintptr_t)0x40000U)
+extern "C" int SaferIdentifyLevel(uint32_t /*dwNumProperties*/,
+                                   void* /*pCodeProperties*/,
+                                   void** lpLevelHandle,
+                                   const wchar_t* /*lpszReserved*/) {
+    TRACE_REAL(SaferIdentifyLevel);
+    if (lpLevelHandle) *lpLevelHandle = SHARPOS_SAFER_LEVEL_FULLYTRUSTED;
+    g_LastError = 0;
+    return 1;  // TRUE
+}
+CRT_REAL(SaferIdentifyLevel);
+
+extern "C" int SaferIdentifyLevelA(uint32_t /*dwNumProperties*/,
+                                    void* /*pCodeProperties*/,
+                                    void** lpLevelHandle,
+                                    const char* /*lpszReserved*/) {
+    TRACE_REAL(SaferIdentifyLevelA);
+    if (lpLevelHandle) *lpLevelHandle = SHARPOS_SAFER_LEVEL_FULLYTRUSTED;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SaferIdentifyLevelA);
+
+// SaferGetLevelInformation — PS queries identifier from the level handle to
+// confirm trust. Class 1 = SaferObjectLevelId. Return value: SAFER_LEVELID_FULLYTRUSTED = 0x40000.
+extern "C" int SaferGetLevelInformation(void* /*hLevelHandle*/,
+                                         uint32_t dwInfoType,
+                                         void* lpQueryBuffer,
+                                         uint32_t /*dwInBufferSize*/,
+                                         uint32_t* lpdwOutBufferSize) {
+    TRACE_REAL(SaferGetLevelInformation);
+    if (dwInfoType == 1 /*SaferObjectLevelId*/ && lpQueryBuffer) {
+        *(uint32_t*)lpQueryBuffer = 0x40000;  // SAFER_LEVELID_FULLYTRUSTED
+        if (lpdwOutBufferSize) *lpdwOutBufferSize = 4;
+        g_LastError = 0;
+        return 1;
+    }
+    g_LastError = 87;
+    return 0;
+}
+CRT_REAL(SaferGetLevelInformation);
+
+extern "C" int SaferCloseLevel(void* /*hLevelHandle*/) {
+    TRACE_REAL(SaferCloseLevel);
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SaferCloseLevel);
+
+// SaferComputeTokenFromLevel — given a SAFER level handle, build a restricted
+// access token. PS uses this to verify trust at command import. We don't
+// have a real token system; hand back a sentinel that PS Safer-Module path
+// treats as success → cmdlet loads.
+#define SHARPOS_SAFER_TOKEN_SENTINEL  ((void*)(uintptr_t)0x5AFE12C00DE5BEEFULL)
+extern "C" int SaferComputeTokenFromLevel(void* /*LevelHandle*/,
+                                           void* /*InAccessToken*/,
+                                           void** OutAccessToken,
+                                           uint32_t /*dwFlags*/,
+                                           void* /*lpReserved*/) {
+    TRACE_REAL(SaferComputeTokenFromLevel);
+    if (OutAccessToken) *OutAccessToken = SHARPOS_SAFER_TOKEN_SENTINEL;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SaferComputeTokenFromLevel);
+
+extern "C" int CheckTokenMembership(void* /*TokenHandle*/, void* /*SidToCheck*/, int* IsMember) {
+    TRACE_REAL(CheckTokenMembership);
+    int err = SharpOSHost_CheckTokenMembership(IsMember);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(CheckTokenMembership);
+
+extern "C" int DuplicateTokenEx(void* /*hExistingToken*/, unsigned long /*dwDesiredAccess*/,
+                                 void* /*lpTokenAttributes*/, int /*ImpersonationLevel*/,
+                                 int /*TokenType*/, void** phNewToken) {
+    TRACE_REAL(DuplicateTokenEx);
+    int err = SharpOSHost_DuplicateTokenEx(phNewToken);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(DuplicateTokenEx);
+
+// ─── step126.2: shell32 known-folder stubs (no logic, controlled failure) ──
+// PowerShell's System.Management.Automation.Platform::.cctor calls
+// Environment.GetFolderPath(SpecialFolder.ApplicationData / UserProfile /
+// ProgramData / ...) which on Windows-impl SPC routes through:
+//   Environment.GetFolderPathCore
+//     → Interop.Shell32.SHGetKnownFolderPath  (preferred, new API)
+//     → Interop.Shell32.SHGetFolderPathW       (legacy fallback)
+// On non-zero HRESULT, BCL returns string.Empty → caller treats as
+// "no profile path" and uses defaults (PowerShell stops looking for
+// PSReadLine history / module roots / user profile, continues init).
+//
+// On unikernel there's no per-user roaming/profile/known-folder concept;
+// returning E_FAIL is the semantically correct answer.
+//
+// Win32 HRESULT codes (WinError.h):
+//   E_FAIL = 0x80004005
+//   E_INVALIDARG = 0x80070057
+
+// Kernel-side policy in OS/src/PAL/SharpOSHost/ShellFolders.cs.
+extern "C" int SharpOSHost_ShellGetKnownFolderPath(void** outPathPtr);
+extern "C" int SharpOSHost_ShellGetFolderPath(wchar_t* pszPath);
+
+extern "C" long SHGetKnownFolderPath(const void* /*rfid*/, unsigned long /*dwFlags*/,
+                                      void* /*hToken*/, wchar_t** ppszPath) {
+    TRACE_REAL(SHGetKnownFolderPath);
+    return (long)SharpOSHost_ShellGetKnownFolderPath((void**)ppszPath);
+}
+CRT_REAL(SHGetKnownFolderPath);
+
+extern "C" long SHGetFolderPathW(void* /*hwnd*/, int /*csidl*/, void* /*hToken*/,
+                                  unsigned long /*dwFlags*/, wchar_t* pszPath) {
+    TRACE_REAL(SHGetFolderPathW);
+    return (long)SharpOSHost_ShellGetFolderPath(pszPath);
+}
+CRT_REAL(SHGetFolderPathW);
+
+// ─── step126.4: wldp (Lock Down Policy) — return "no policy / allow" ─────
+// PowerShell uses these for:
+//   - Constrained Language Mode detection (WldpGetLockdownPolicy)
+//   - Dynamic code trust (WldpQueryDynamicCodeTrust) — affects Add-Type
+//   - COM approved-list check (WldpIsClassInApprovedList) — affects scripting
+// On unikernel no policy is active; return success + "allowed" values.
+//
+// WLDP_LOCKDOWN_STATE values (wldp.h):
+//   WLDP_LOCKDOWN_OFF      = 0x00000000
+//   WLDP_LOCKDOWN_DEFINED  = 0x80000000  (policy is set, see other bits)
+//   WLDP_LOCKDOWN_CONFIG_CI_AUDIT  = 0x4
+//   WLDP_LOCKDOWN_CONFIG_CI = 0x8
+//   WLDP_LOCKDOWN_UMCIENFORCE = 0x40000000
+
+// Kernel-side policy in OS/src/PAL/SharpOSHost/LockdownPolicy.cs.
+extern "C" int SharpOSHost_WldpGetLockdownPolicy(unsigned long* outState);
+extern "C" int SharpOSHost_WldpQueryDynamicCodeTrust(void);
+extern "C" int SharpOSHost_WldpSetDynamicCodeTrust(void);
+extern "C" int SharpOSHost_WldpIsClassInApprovedList(int* outApproved);
+extern "C" int SharpOSHost_WldpQueryWindowsLockdownMode(unsigned long* outMode);
+extern "C" int SharpOSHost_WldpIsDynamicCodePolicyEnabled(int* outEnabled);
+extern "C" int SharpOSHost_WldpCanExecuteFile(int* outResult);
+
+extern "C" long WldpGetLockdownPolicy(void* /*pHostInformation*/,
+                                       unsigned long* lockdownState,
+                                       unsigned long /*lockdownFlags*/) {
+    TRACE_REAL(WldpGetLockdownPolicy);
+    return (long)SharpOSHost_WldpGetLockdownPolicy(lockdownState);
+}
+CRT_REAL(WldpGetLockdownPolicy);
+
+extern "C" long WldpQueryDynamicCodeTrust(void* /*fileHandle*/,
+                                           const void* /*baseImage*/,
+                                           unsigned long /*imageSize*/) {
+    TRACE_REAL(WldpQueryDynamicCodeTrust);
+    return (long)SharpOSHost_WldpQueryDynamicCodeTrust();
+}
+CRT_REAL(WldpQueryDynamicCodeTrust);
+
+extern "C" long WldpSetDynamicCodeTrust(void* /*fileHandle*/) {
+    TRACE_REAL(WldpSetDynamicCodeTrust);
+    return (long)SharpOSHost_WldpSetDynamicCodeTrust();
+}
+CRT_REAL(WldpSetDynamicCodeTrust);
+
+extern "C" long WldpIsClassInApprovedList(const void* /*classID*/,
+                                           const void* /*hostInformation*/,
+                                           int* isApproved,
+                                           unsigned long /*optionalFlags*/) {
+    TRACE_REAL(WldpIsClassInApprovedList);
+    return (long)SharpOSHost_WldpIsClassInApprovedList(isApproved);
+}
+CRT_REAL(WldpIsClassInApprovedList);
+
+extern "C" long WldpQueryWindowsLockdownMode(unsigned long* lockdownMode) {
+    TRACE_REAL(WldpQueryWindowsLockdownMode);
+    return (long)SharpOSHost_WldpQueryWindowsLockdownMode(lockdownMode);
+}
+CRT_REAL(WldpQueryWindowsLockdownMode);
+
+extern "C" long WldpIsDynamicCodePolicyEnabled(int* isEnabled) {
+    TRACE_REAL(WldpIsDynamicCodePolicyEnabled);
+    return (long)SharpOSHost_WldpIsDynamicCodePolicyEnabled(isEnabled);
+}
+CRT_REAL(WldpIsDynamicCodePolicyEnabled);
+
+extern "C" long WldpCanExecuteFile(const void* /*host*/,
+                                    unsigned long /*options*/,
+                                    void* /*fileHandle*/,
+                                    const wchar_t* /*auditInfo*/,
+                                    int* result) {
+    TRACE_REAL(WldpCanExecuteFile);
+    return (long)SharpOSHost_WldpCanExecuteFile(result);
+}
+CRT_REAL(WldpCanExecuteFile);
+
+// step126.9: amsi.dll shims. Kernel policy in AmsiPolicy.cs returns CLEAN.
+extern "C" int  SharpOSHost_AmsiInitialize(uint64_t* outContext);
+extern "C" void SharpOSHost_AmsiUninitialize(void);
+extern "C" int  SharpOSHost_AmsiOpenSession(uint64_t* outSession);
+extern "C" void SharpOSHost_AmsiCloseSession(void);
+extern "C" int  SharpOSHost_AmsiScan(unsigned int* outResult);
+
+extern "C" long AmsiInitialize(const wchar_t* /*appName*/, void** amsiContext) {
+    TRACE_REAL(AmsiInitialize);
+    uint64_t ctx = 0;
+    int hr = SharpOSHost_AmsiInitialize(&ctx);
+    if (amsiContext != nullptr) *amsiContext = (void*)(uintptr_t)ctx;
+    return (long)hr;
+}
+CRT_REAL(AmsiInitialize);
+
+extern "C" void AmsiUninitialize(void* /*amsiContext*/) {
+    TRACE_REAL(AmsiUninitialize);
+    SharpOSHost_AmsiUninitialize();
+}
+CRT_REAL(AmsiUninitialize);
+
+extern "C" long AmsiOpenSession(void* /*amsiContext*/, void** session) {
+    TRACE_REAL(AmsiOpenSession);
+    uint64_t s = 0;
+    int hr = SharpOSHost_AmsiOpenSession(&s);
+    if (session != nullptr) *session = (void*)(uintptr_t)s;
+    return (long)hr;
+}
+CRT_REAL(AmsiOpenSession);
+
+extern "C" void AmsiCloseSession(void* /*amsiContext*/, void* /*session*/) {
+    TRACE_REAL(AmsiCloseSession);
+    SharpOSHost_AmsiCloseSession();
+}
+CRT_REAL(AmsiCloseSession);
+
+extern "C" long AmsiScanString(void* /*amsiContext*/, const wchar_t* /*string*/,
+                                const wchar_t* /*contentName*/, void* /*session*/,
+                                unsigned int* outResult) {
+    TRACE_REAL(AmsiScanString);
+    return (long)SharpOSHost_AmsiScan(outResult);
+}
+CRT_REAL(AmsiScanString);
+
+extern "C" long AmsiScanBuffer(void* /*amsiContext*/, const void* /*buffer*/,
+                                unsigned int /*length*/, const wchar_t* /*contentName*/,
+                                void* /*session*/, unsigned int* outResult) {
+    TRACE_REAL(AmsiScanBuffer);
+    return (long)SharpOSHost_AmsiScan(outResult);
+}
+CRT_REAL(AmsiScanBuffer);
+
+extern "C" int SharpOSHost_AmsiNotifyOperation(void);
+extern "C" long AmsiNotifyOperation(void* /*amsiContext*/, const wchar_t* /*op*/,
+                                     const wchar_t* /*contentName*/) {
+    TRACE_REAL(AmsiNotifyOperation);
+    return (long)SharpOSHost_AmsiNotifyOperation();
+}
+CRT_REAL(AmsiNotifyOperation);
+
+extern "C" long AmsiNotifyOperationA(void* /*amsiContext*/, const char* /*op*/,
+                                      const char* /*contentName*/) {
+    TRACE_REAL(AmsiNotifyOperationA);
+    return (long)SharpOSHost_AmsiNotifyOperation();
+}
+CRT_REAL(AmsiNotifyOperationA);
+
+// step126.18: kernel32 drive-info / process-list shims for FileSystem
+// provider startup. Kernel policy: single virtual C: drive backed by
+// \sharpos\; single process pid=1. Unblocks Get-ChildItem/Set-Location/etc.
+extern "C" unsigned int SharpOSHost_GetLogicalDrives(void);
+extern "C" int          SharpOSHost_GetVolumeInformation(unsigned int* outSerial,
+                                                         unsigned int* outMaxComp,
+                                                         unsigned int* outFsFlags);
+extern "C" int          SharpOSHost_EnumProcesses(unsigned int* outPid);
+
+extern "C" unsigned int GetLogicalDrives(void) {
+    TRACE_REAL(GetLogicalDrives);
+    g_LastError = 0;
+    return SharpOSHost_GetLogicalDrives();
+}
+CRT_REAL(GetLogicalDrives);
+
+// BOOL GetVolumeInformationW(LPCWSTR root, LPWSTR nameBuf, DWORD nameSize,
+//   LPDWORD serial, LPDWORD maxComp, LPDWORD fsFlags, LPWSTR fsNameBuf,
+//   DWORD fsNameSize)
+extern "C" int GetVolumeInformationW(const wchar_t* /*lpRootPathName*/,
+                                      wchar_t* lpVolumeNameBuffer,
+                                      unsigned int nVolumeNameSize,
+                                      unsigned int* lpVolumeSerialNumber,
+                                      unsigned int* lpMaximumComponentLength,
+                                      unsigned int* lpFileSystemFlags,
+                                      wchar_t* lpFileSystemNameBuffer,
+                                      unsigned int nFileSystemNameSize) {
+    TRACE_REAL(GetVolumeInformationW);
+    int ok = SharpOSHost_GetVolumeInformation(lpVolumeSerialNumber,
+                                              lpMaximumComponentLength,
+                                              lpFileSystemFlags);
+    g_LastError = ok ? 0 : 87;
+    if (ok && lpVolumeNameBuffer && nVolumeNameSize > 0) {
+        // Volume label "SharpOS" + L'\0' if it fits.
+        const wchar_t* lbl = L"SharpOS";
+        unsigned int i = 0;
+        while (lbl[i] && i + 1 < nVolumeNameSize) { lpVolumeNameBuffer[i] = lbl[i]; i++; }
+        lpVolumeNameBuffer[i] = 0;
+    }
+    if (ok && lpFileSystemNameBuffer && nFileSystemNameSize > 0) {
+        const wchar_t* fs = L"FAT";
+        unsigned int i = 0;
+        while (fs[i] && i + 1 < nFileSystemNameSize) { lpFileSystemNameBuffer[i] = fs[i]; i++; }
+        lpFileSystemNameBuffer[i] = 0;
+    }
+    return ok;
+}
+CRT_REAL(GetVolumeInformationW);
+
+// BOOL K32EnumProcesses(DWORD* lpidProcess, DWORD cb, LPDWORD lpcbNeeded)
+// ULONG GetAdaptersAddresses(ULONG Family, ULONG Flags, PVOID Reserved,
+//                            PIP_ADAPTER_ADDRESSES AdapterAddresses,
+//                            PULONG SizePointer)
+// PS PSDrive auto-mount enumerates net adapters via this. ERROR_NO_DATA (232)
+// = "no adapters" → init proceeds without trying to mount any network drives.
+extern "C" unsigned long GetAdaptersAddresses(unsigned long /*Family*/,
+                                               unsigned long /*Flags*/,
+                                               void* /*Reserved*/,
+                                               void* /*AdapterAddresses*/,
+                                               unsigned long* SizePointer) {
+    TRACE_REAL(GetAdaptersAddresses);
+    if (SizePointer) *SizePointer = 0;
+    return 232;  // ERROR_NO_DATA
+}
+CRT_REAL(GetAdaptersAddresses);
+
+// DWORD WNetGetConnectionW(LPCWSTR lpLocalName, LPWSTR lpRemoteName,
+//                           LPDWORD lpnLength)
+// PS calls this during PSDrive auto-mount to classify drives local vs network.
+// ERROR_NOT_CONNECTED (2250) = "this local name is not redirected to a
+// network resource" → PS treats drive as local, init proceeds.
+extern "C" unsigned long WNetGetConnectionW(const wchar_t* /*lpLocalName*/,
+                                             wchar_t* /*lpRemoteName*/,
+                                             unsigned long* lpnLength) {
+    TRACE_REAL(WNetGetConnectionW);
+    if (lpnLength) *lpnLength = 0;
+    return 2250;  // ERROR_NOT_CONNECTED
+}
+CRT_REAL(WNetGetConnectionW);
+
+// UINT GetDriveTypeW(LPCWSTR lpRootPathName) — extract drive letter, delegate.
+extern "C" unsigned int GetDriveTypeW(const wchar_t* lpRootPathName) {
+    TRACE_REAL(GetDriveTypeW);
+    int letter = 0;
+    if (lpRootPathName != nullptr && lpRootPathName[0] != 0) letter = (int)lpRootPathName[0];
+    g_LastError = 0;
+    return SharpOSHost_GetDriveType(letter);
+}
+CRT_REAL(GetDriveTypeW);
+
+extern "C" int K32EnumProcesses(unsigned int* lpidProcess, unsigned int cb, unsigned int* lpcbNeeded) {
+    TRACE_REAL(K32EnumProcesses);
+    unsigned int pid = 0;
+    int count = SharpOSHost_EnumProcesses(&pid);
+    unsigned int needed = (unsigned int)count * 4;
+    if (lpcbNeeded) *lpcbNeeded = needed;
+    if (lpidProcess == nullptr || cb < 4) {
+        g_LastError = 0;
+        return 1;  // BCL reads lpcbNeeded
+    }
+    if (count >= 1 && cb >= 4) lpidProcess[0] = pid;
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(K32EnumProcesses);
+
+// step126.11: user32 shims. Kernel policy in UserUiPolicy.cs.
+extern "C" int   SharpOSHost_SystemParametersInfo(unsigned int action, unsigned int param,
+                                                  unsigned char* pvParam, unsigned int fWinIni);
+extern "C" int   SharpOSHost_GetSystemMetrics(int nIndex);
+extern "C" void* SharpOSHost_GetConsoleWindow(void);
+
+extern "C" int SystemParametersInfoW(unsigned int uiAction, unsigned int uiParam,
+                                      void* pvParam, unsigned int fWinIni) {
+    TRACE_REAL(SystemParametersInfoW);
+    int ok = SharpOSHost_SystemParametersInfo(uiAction, uiParam,
+                                              (unsigned char*)pvParam, fWinIni);
+    g_LastError = ok ? 0 : 50;  // ERROR_NOT_SUPPORTED
+    return ok;
+}
+CRT_REAL(SystemParametersInfoW);
+
+extern "C" int SystemParametersInfoA(unsigned int uiAction, unsigned int uiParam,
+                                      void* pvParam, unsigned int fWinIni) {
+    TRACE_REAL(SystemParametersInfoA);
+    int ok = SharpOSHost_SystemParametersInfo(uiAction, uiParam,
+                                              (unsigned char*)pvParam, fWinIni);
+    g_LastError = ok ? 0 : 50;
+    return ok;
+}
+CRT_REAL(SystemParametersInfoA);
+
+extern "C" int GetSystemMetrics(int nIndex) {
+    TRACE_REAL(GetSystemMetrics);
+    return SharpOSHost_GetSystemMetrics(nIndex);
+}
+CRT_REAL(GetSystemMetrics);
+
+extern "C" void* GetConsoleWindow(void) {
+    TRACE_REAL(GetConsoleWindow);
+    return SharpOSHost_GetConsoleWindow();
+}
+CRT_REAL(GetConsoleWindow);
+
+// step126.13: kernel32 OpenProcess + GetCPInfoEx + advapi32 LookupAccountName.
+// Kernel policy in ProcessAndCodepage.cs.
+extern "C" void* SharpOSHost_OpenProcess(unsigned int dwProcessId);
+extern "C" int   SharpOSHost_GetCPInfoEx(void);
+extern "C" int   SharpOSHost_LookupAccountName(unsigned int* outSidSize,
+                                                unsigned int* outDomainSize,
+                                                int* outUse);
+
+extern "C" void* OpenProcess(unsigned long /*dwDesiredAccess*/,
+                              int /*bInheritHandle*/,
+                              unsigned long dwProcessId) {
+    TRACE_REAL(OpenProcess);
+    void* h = SharpOSHost_OpenProcess((unsigned int)dwProcessId);
+    g_LastError = h ? 0 : 87 /*ERROR_INVALID_PARAMETER*/;
+    return h;
+}
+CRT_REAL(OpenProcess);
+
+extern "C" int GetCPInfoExW(unsigned int /*CodePage*/, unsigned long /*dwFlags*/, void* /*out*/) {
+    TRACE_REAL(GetCPInfoExW);
+    int err = SharpOSHost_GetCPInfoEx();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(GetCPInfoExW);
+
+extern "C" int GetCPInfoExA(unsigned int /*CodePage*/, unsigned long /*dwFlags*/, void* /*out*/) {
+    TRACE_REAL(GetCPInfoExA);
+    int err = SharpOSHost_GetCPInfoEx();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(GetCPInfoExA);
+
+extern "C" int LookupAccountNameW(const wchar_t* /*lpSystemName*/,
+                                   const wchar_t* /*lpAccountName*/,
+                                   void* /*Sid*/, unsigned long* cbSid,
+                                   wchar_t* /*ReferencedDomainName*/,
+                                   unsigned long* cchReferencedDomainName,
+                                   int* peUse) {
+    TRACE_REAL(LookupAccountNameW);
+    int err = SharpOSHost_LookupAccountName((unsigned int*)cbSid,
+                                             (unsigned int*)cchReferencedDomainName,
+                                             peUse);
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(LookupAccountNameW);
+
+// step126.10: ole32/combase COM init shims. Kernel policy in ComPolicy.cs.
+extern "C" int   SharpOSHost_CoInitializeEx(int coInit);
+extern "C" int   SharpOSHost_CoInitialize(void);
+extern "C" void  SharpOSHost_CoUninitialize(void);
+extern "C" int   SharpOSHost_CoCreateInstance(void** outIface);
+extern "C" void* SharpOSHost_CoTaskMemAlloc(uint64_t size);
+extern "C" void  SharpOSHost_CoTaskMemFree(void* ptr);
+
+extern "C" long CoInitializeEx(void* /*reserved*/, unsigned long dwCoInit) {
+    TRACE_REAL(CoInitializeEx);
+    return (long)SharpOSHost_CoInitializeEx((int)dwCoInit);
+}
+CRT_REAL(CoInitializeEx);
+
+extern "C" long CoInitialize(void* /*reserved*/) {
+    TRACE_REAL(CoInitialize);
+    return (long)SharpOSHost_CoInitialize();
+}
+CRT_REAL(CoInitialize);
+
+extern "C" void CoUninitialize(void) {
+    TRACE_REAL(CoUninitialize);
+    SharpOSHost_CoUninitialize();
+}
+CRT_REAL(CoUninitialize);
+
+extern "C" long CoCreateInstance(const void* /*rclsid*/, void* /*pUnkOuter*/,
+                                  unsigned long /*dwClsContext*/, const void* /*riid*/,
+                                  void** ppv) {
+    TRACE_REAL(CoCreateInstance);
+    return (long)SharpOSHost_CoCreateInstance(ppv);
+}
+CRT_REAL(CoCreateInstance);
+
+extern "C" void* CoTaskMemAlloc(size_t cb) {
+    TRACE_REAL(CoTaskMemAlloc);
+    return SharpOSHost_CoTaskMemAlloc((uint64_t)cb);
+}
+CRT_REAL(CoTaskMemAlloc);
+
+extern "C" void CoTaskMemFree(void* pv) {
+    TRACE_REAL(CoTaskMemFree);
+    SharpOSHost_CoTaskMemFree(pv);
+}
+CRT_REAL(CoTaskMemFree);
+
+// ─── step126.5: kernel32 directory ops — pretend "already exists" ──────
+// PowerShell tries to create module/cache/profile directories on startup.
+// We have a read-only FS — claim every target already exists, then any
+// subsequent file create attempts in those directories will fail with
+// ERROR_PATH_NOT_FOUND, which BCL surfaces as catchable IO exception.
+// BCL FileSystem.CreateDirectory's default `allowExisting=true` path
+// silently succeeds when ERROR_ALREADY_EXISTS is returned.
+
+// Kernel-side policy in OS/src/PAL/SharpOSHost/FileSystemPolicy.cs.
+extern "C" int SharpOSHost_CreateDirectory(void);
+extern "C" int SharpOSHost_RemoveDirectory(void);
+extern "C" int SharpOSHost_SetEnvironmentVariable(void);
+
+extern "C" int CreateDirectoryW(const wchar_t* /*lpPathName*/,
+                                 void* /*lpSecurityAttributes*/) {
+    TRACE_REAL(CreateDirectoryW);
+    int err = SharpOSHost_CreateDirectory();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(CreateDirectoryW);
+
+extern "C" int RemoveDirectoryW(const wchar_t* /*lpPathName*/) {
+    TRACE_REAL(RemoveDirectoryW);
+    int err = SharpOSHost_RemoveDirectory();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(RemoveDirectoryW);
+
+extern "C" int SetEnvironmentVariableW(const wchar_t* /*lpName*/,
+                                        const wchar_t* /*lpValue*/) {
+    TRACE_REAL(SetEnvironmentVariableW);
+    int err = SharpOSHost_SetEnvironmentVariable();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(SetEnvironmentVariableW);
+
+extern "C" int SetEnvironmentVariableA(const char* /*lpName*/,
+                                        const char* /*lpValue*/) {
+    TRACE_REAL(SetEnvironmentVariableA);
+    int err = SharpOSHost_SetEnvironmentVariable();
+    g_LastError = (uint32_t)err;
+    return err == 0 ? 1 : 0;
+}
+CRT_REAL(SetEnvironmentVariableA);
+
+// FormatMessageW — exists at line ~2588 with FROM_STRING support for mscorrc.
+// We just need to wire it into the kernel32 resolver below.
+//
+// FormatMessageA — ANSI variant. PowerShell may call this for Win32Exception
+// fallback; minimal stub returning 0 = no chars (BCL handles empty as default).
+// Kernel-side policy in OS/src/PAL/SharpOSHost/FileSystemPolicy.cs.
+extern "C" int SharpOSHost_FormatMessage(void);
+
+extern "C" unsigned long FormatMessageA(unsigned long dwFlags,
+                                         const void* /*lpSource*/,
+                                         unsigned long /*dwMessageId*/,
+                                         unsigned long /*dwLanguageId*/,
+                                         char* lpBuffer,
+                                         unsigned long /*nSize*/,
+                                         char** /*Arguments*/) {
+    TRACE_REAL(FormatMessageA);
+    // Clear out param (ABI-level marshalling — handle ALLOCATE_BUFFER vs
+    // caller-buffer flag here, not in kernel).
+    if (dwFlags & 0x100u) {
+        char** outPtr = (char**)lpBuffer;
+        if (outPtr != nullptr) *outPtr = nullptr;
+    } else if (lpBuffer != nullptr) {
+        lpBuffer[0] = 0;
+    }
+    g_LastError = (uint32_t)SharpOSHost_FormatMessage();
+    return 0;
+}
+CRT_REAL(FormatMessageA);
+
+// ─── step126: kernel32 Console facade — thin marshal to kernel C# ─────
+// Backing: stdout/stderr → SharpOSHost_DebugWrite path through
+// ConsoleWin32.cs. Standard input is currently inert (returns 0 bytes).
+// All BCL System.Console init paths route through here:
+//   GetStdHandle → fake sentinel handle
+//   GetFileType  → FILE_TYPE_CHAR for std handles, DISK for files
+//   GetConsoleMode → reasonable defaults (ENABLE_PROCESSED_OUTPUT etc.)
+//   WriteConsoleW → UTF-16 → UART byte stream
+//   WriteFile (to std handle) → routed to console
+//   GetConsoleScreenBufferInfo → synthetic 80x25
+
+extern "C" uint64_t SharpOSHost_GetStdHandle(int nStdHandle);
+extern "C" int      SharpOSHost_ConsoleWriteW(uint64_t hConsole, const wchar_t* buffer,
+                                              uint32_t nChars, uint32_t* numCharsWritten);
+extern "C" int      SharpOSHost_ConsoleWriteFile(uint64_t hHandle, const unsigned char* buffer,
+                                                 uint32_t nBytes, uint32_t* numBytesWritten);
+extern "C" int      SharpOSHost_GetConsoleMode(uint64_t hConsole, uint32_t* outMode);
+extern "C" int      SharpOSHost_SetConsoleMode(uint64_t hConsole, uint32_t mode);
+extern "C" uint32_t SharpOSHost_GetFileType(uint64_t hHandle);
+extern "C" int      SharpOSHost_GetConsoleScreenBufferInfo(uint64_t hConsole, void* outInfo);
+extern "C" int      SharpOSHost_SetConsoleCursorPosition(uint64_t hConsole, int packedCoord);
+extern "C" int      SharpOSHost_SetConsoleTextAttribute(uint64_t hConsole, unsigned short attrs);
+
+extern "C" void* GetStdHandle(unsigned long nStdHandle) {
+    TRACE_REAL(GetStdHandle);
+    int s = (int)(long)nStdHandle;  // -10 / -11 / -12 as DWORD
+    uint64_t h = SharpOSHost_GetStdHandle(s);
+    return (void*)(uintptr_t)h;
+}
+CRT_REAL(GetStdHandle);
+
+extern "C" int WriteConsoleW(void* hConsole, const void* lpBuffer,
+                              unsigned long nChars, unsigned long* lpCharsWritten,
+                              void* /*lpReserved*/) {
+    TRACE_REAL(WriteConsoleW);
+    uint32_t written = 0;
+    int ok = SharpOSHost_ConsoleWriteW((uint64_t)(uintptr_t)hConsole,
+                                       (const wchar_t*)lpBuffer,
+                                       (uint32_t)nChars, &written);
+    if (lpCharsWritten != nullptr) *lpCharsWritten = (unsigned long)written;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(WriteConsoleW);
+
+// WriteFile is also used for file I/O. Route to console when the handle
+// matches one of our std sentinels (SharpOSHost_ConsoleWriteFile returns
+// 0 if not a console handle — then caller can fall back to the file
+// CreateFileW path. For now we only support std-handle WriteFile; the
+// file CreateFileW path doesn't go through WriteFile in our PEIMG flow.
+extern "C" int WriteFile(void* hHandle, const void* lpBuffer,
+                          unsigned long nBytes, unsigned long* lpBytesWritten,
+                          void* /*lpOverlapped*/) {
+    TRACE_REAL(WriteFile);
+    uint32_t written = 0;
+    int ok = SharpOSHost_ConsoleWriteFile((uint64_t)(uintptr_t)hHandle,
+                                          (const unsigned char*)lpBuffer,
+                                          (uint32_t)nBytes, &written);
+    if (lpBytesWritten != nullptr) *lpBytesWritten = (unsigned long)written;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(WriteFile);
+
+extern "C" int GetConsoleMode(void* hConsole, unsigned long* lpMode) {
+    TRACE_REAL(GetConsoleMode);
+    uint32_t mode = 0;
+    int ok = SharpOSHost_GetConsoleMode((uint64_t)(uintptr_t)hConsole, &mode);
+    if (lpMode != nullptr) *lpMode = (unsigned long)mode;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(GetConsoleMode);
+
+extern "C" int SetConsoleMode(void* hConsole, unsigned long dwMode) {
+    TRACE_REAL(SetConsoleMode);
+    int ok = SharpOSHost_SetConsoleMode((uint64_t)(uintptr_t)hConsole, (uint32_t)dwMode);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(SetConsoleMode);
+
+extern "C" unsigned long GetFileType(void* hHandle) {
+    TRACE_REAL(GetFileType);
+    uint32_t t = SharpOSHost_GetFileType((uint64_t)(uintptr_t)hHandle);
+    g_LastError = 0;
+    return (unsigned long)t;
+}
+CRT_REAL(GetFileType);
+
+extern "C" int GetConsoleScreenBufferInfo(void* hConsole, void* lpConsoleScreenBufferInfo) {
+    TRACE_REAL(GetConsoleScreenBufferInfo);
+    int ok = SharpOSHost_GetConsoleScreenBufferInfo((uint64_t)(uintptr_t)hConsole,
+                                                    lpConsoleScreenBufferInfo);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(GetConsoleScreenBufferInfo);
+
+extern "C" int SetConsoleCursorPosition(void* hConsole, int packedCoord) {
+    TRACE_REAL(SetConsoleCursorPosition);
+    int ok = SharpOSHost_SetConsoleCursorPosition((uint64_t)(uintptr_t)hConsole, packedCoord);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(SetConsoleCursorPosition);
+
+extern "C" int SetConsoleTextAttribute(void* hConsole, unsigned short wAttributes) {
+    TRACE_REAL(SetConsoleTextAttribute);
+    int ok = SharpOSHost_SetConsoleTextAttribute((uint64_t)(uintptr_t)hConsole, wAttributes);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(SetConsoleTextAttribute);
+
+// step126.9: kernel-side policy in ConsoleWin32.cs (SetConsoleCtrlHandler,
+// GetStartupInfo).
+extern "C" int  SharpOSHost_SetConsoleCtrlHandler(void);
+extern "C" void SharpOSHost_GetStartupInfo(unsigned int* lpInfo, unsigned int structSize);
+
+extern "C" int SetConsoleCtrlHandler(void* /*HandlerRoutine*/, int /*Add*/) {
+    TRACE_REAL(SetConsoleCtrlHandler);
+    int ok = SharpOSHost_SetConsoleCtrlHandler();
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(SetConsoleCtrlHandler);
+
+extern "C" void GetStartupInfoW(void* lpStartupInfo) {
+    TRACE_REAL(GetStartupInfoW);
+    // STARTUPINFOW is 104 bytes on x64 (LPSTR/LPWSTR=8, DWORDs=4).
+    // Kernel writes cb at offset 0 and zeroes the rest. Caller's cb field
+    // is normally pre-set with sizeof — but BCL Process startup code
+    // doesn't always init it. We unconditionally write 104.
+    SharpOSHost_GetStartupInfo((unsigned int*)lpStartupInfo, 104);
+}
+CRT_REAL(GetStartupInfoW);
+
+extern "C" void GetStartupInfoA(void* lpStartupInfo) {
+    TRACE_REAL(GetStartupInfoA);
+    SharpOSHost_GetStartupInfo((unsigned int*)lpStartupInfo, 104);
+}
+CRT_REAL(GetStartupInfoA);
+
+// step126.14: ReadConsole — kernel-side reads from PS/2 keyboard via
+// LineEditor. Signature accepts optional CONSOLE_READCONSOLE_CONTROL
+// (we ignore it; line-mode is the only mode supported).
+extern "C" int SharpOSHost_ReadConsole(wchar_t* lpBuffer,
+                                        unsigned int nCharsToRead,
+                                        unsigned int* lpNumberOfCharsRead);
+
+extern "C" int ReadConsoleW(void* /*hConsoleInput*/,
+                             void* lpBuffer,
+                             unsigned long nCharsToRead,
+                             unsigned long* lpNumberOfCharsRead,
+                             void* /*pInputControl*/) {
+    TRACE_REAL(ReadConsoleW);
+    unsigned int written = 0;
+    int ok = SharpOSHost_ReadConsole((wchar_t*)lpBuffer, (unsigned int)nCharsToRead, &written);
+    if (lpNumberOfCharsRead != nullptr) *lpNumberOfCharsRead = (unsigned long)written;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(ReadConsoleW);
+
+extern "C" int ReadConsoleA(void* /*hConsoleInput*/,
+                             void* lpBuffer,
+                             unsigned long nCharsToRead,
+                             unsigned long* lpNumberOfCharsRead,
+                             void* /*pInputControl*/) {
+    TRACE_REAL(ReadConsoleA);
+    // Read wide chars into temporary stack buffer, narrow to ASCII bytes.
+    wchar_t tmp[256];
+    unsigned int toRead = nCharsToRead > 256 ? 256 : (unsigned int)nCharsToRead;
+    unsigned int written = 0;
+    int ok = SharpOSHost_ReadConsole(tmp, toRead, &written);
+    if (ok && lpBuffer != nullptr) {
+        unsigned char* outA = (unsigned char*)lpBuffer;
+        for (unsigned int i = 0; i < written; i++) outA[i] = (unsigned char)(tmp[i] & 0xFF);
+    }
+    if (lpNumberOfCharsRead != nullptr) *lpNumberOfCharsRead = (unsigned long)written;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(ReadConsoleA);
 
 extern "C" int GetCPInfo(uint32_t /*cp*/, void* out) {
     TRACE_REAL(GetCPInfo);
@@ -3765,6 +5569,36 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         if (sharpos_streq(name, "EventSetInformation"))   { g_LastError = 0; return (void*)&SharpOS_EventSetInformation; }
         if (sharpos_streq(name, "EventEnabled"))          { g_LastError = 0; return (void*)&SharpOS_EventEnabled; }
         if (sharpos_streq(name, "EventProviderEnabled"))  { g_LastError = 0; return (void*)&SharpOS_EventProviderEnabled; }
+        // step126: Registry — empty subsystem (kernel C# routes through
+        // SharpOSHost_Reg* exports, all reads return ERROR_FILE_NOT_FOUND
+        // / ERROR_NO_MORE_ITEMS, empty enums).
+        if (sharpos_streq(name, "RegOpenKeyExW"))         { g_LastError = 0; return (void*)&RegOpenKeyExW; }
+        if (sharpos_streq(name, "RegCloseKey"))           { g_LastError = 0; return (void*)&RegCloseKey; }
+        if (sharpos_streq(name, "RegQueryValueExW"))      { g_LastError = 0; return (void*)&RegQueryValueExW; }
+        if (sharpos_streq(name, "RegEnumKeyExW"))         { g_LastError = 0; return (void*)&RegEnumKeyExW; }
+        if (sharpos_streq(name, "RegEnumValueW"))         { g_LastError = 0; return (void*)&RegEnumValueW; }
+        if (sharpos_streq(name, "RegQueryInfoKeyW"))      { g_LastError = 0; return (void*)&RegQueryInfoKeyW; }
+        if (sharpos_streq(name, "RegCreateKeyExW"))       { g_LastError = 0; return (void*)&RegCreateKeyExW; }
+        if (sharpos_streq(name, "RegFlushKey"))           { g_LastError = 0; return (void*)&RegFlushKey; }
+        // step126: Token/Privilege stubs — all return controlled failure
+        // so ProcessManager / WindowsIdentity / etc. cctors don't throw.
+        if (sharpos_streq(name, "LookupPrivilegeValueW")) { g_LastError = 0; return (void*)&LookupPrivilegeValueW; }
+        if (sharpos_streq(name, "LookupPrivilegeNameW"))  { g_LastError = 0; return (void*)&LookupPrivilegeNameW; }
+        if (sharpos_streq(name, "OpenProcessToken"))      { g_LastError = 0; return (void*)&OpenProcessToken; }
+        if (sharpos_streq(name, "OpenThreadToken"))       { g_LastError = 0; return (void*)&OpenThreadToken; }
+        if (sharpos_streq(name, "AdjustTokenPrivileges")) { g_LastError = 0; return (void*)&AdjustTokenPrivileges; }
+        if (sharpos_streq(name, "GetTokenInformation"))   { g_LastError = 0; return (void*)&GetTokenInformation; }
+        if (sharpos_streq(name, "ImpersonateLoggedOnUser")){ g_LastError = 0; return (void*)&ImpersonateLoggedOnUser; }
+        if (sharpos_streq(name, "RevertToSelf"))          { g_LastError = 0; return (void*)&RevertToSelf; }
+        if (sharpos_streq(name, "CheckTokenMembership"))  { g_LastError = 0; return (void*)&CheckTokenMembership; }
+        if (sharpos_streq(name, "DuplicateTokenEx"))      { g_LastError = 0; return (void*)&DuplicateTokenEx; }
+        if (sharpos_streq(name, "LookupAccountNameW"))    { g_LastError = 0; return (void*)&LookupAccountNameW; }
+        if (sharpos_streq(name, "SaferIdentifyLevel"))    { g_LastError = 0; return (void*)&SaferIdentifyLevel; }
+        if (sharpos_streq(name, "SaferIdentifyLevelW"))   { g_LastError = 0; return (void*)&SaferIdentifyLevel; }
+        if (sharpos_streq(name, "SaferIdentifyLevelA"))   { g_LastError = 0; return (void*)&SaferIdentifyLevelA; }
+        if (sharpos_streq(name, "SaferGetLevelInformation")) { g_LastError = 0; return (void*)&SaferGetLevelInformation; }
+        if (sharpos_streq(name, "SaferCloseLevel"))       { g_LastError = 0; return (void*)&SaferCloseLevel; }
+        if (sharpos_streq(name, "SaferComputeTokenFromLevel")) { g_LastError = 0; return (void*)&SaferComputeTokenFromLevel; }
         SharpOSHost_DebugPrintForced("[GetProcAddress advapi32] unknown name=");
         SharpOSHost_DebugPrintForced(name);
         SharpOSHost_DebugPrintForced("\n");
@@ -3800,8 +5634,107 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         return nullptr;
     }
     if (mod == SHARPOS_OLE32_HMODULE && name != nullptr) {
-        if (sharpos_streq(name, "CoCreateGuid")) { g_LastError = 0; return (void*)&CoCreateGuid; }
+        if (sharpos_streq(name, "CoCreateGuid"))      { g_LastError = 0; return (void*)&CoCreateGuid; }
+        // step126.10: COM init
+        if (sharpos_streq(name, "CoInitializeEx"))    { g_LastError = 0; return (void*)&CoInitializeEx; }
+        if (sharpos_streq(name, "CoInitialize"))      { g_LastError = 0; return (void*)&CoInitialize; }
+        if (sharpos_streq(name, "CoUninitialize"))    { g_LastError = 0; return (void*)&CoUninitialize; }
+        if (sharpos_streq(name, "CoCreateInstance"))  { g_LastError = 0; return (void*)&CoCreateInstance; }
+        if (sharpos_streq(name, "CoTaskMemAlloc"))    { g_LastError = 0; return (void*)&CoTaskMemAlloc; }
+        if (sharpos_streq(name, "CoTaskMemFree"))     { g_LastError = 0; return (void*)&CoTaskMemFree; }
         SharpOSHost_DebugPrintForced("[GetProcAddress ole32] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_SHELL32_HMODULE && name != nullptr) {
+        // step126.2: Known-folder lookups return E_FAIL (no profile/AppData
+        // on unikernel). BCL Environment.GetFolderPathCore handles this by
+        // returning string.Empty.
+        if (sharpos_streq(name, "SHGetKnownFolderPath"))  { g_LastError = 0; return (void*)&SHGetKnownFolderPath; }
+        if (sharpos_streq(name, "SHGetKnownFolderPathW")) { g_LastError = 0; return (void*)&SHGetKnownFolderPath; }
+        if (sharpos_streq(name, "SHGetFolderPathW"))      { g_LastError = 0; return (void*)&SHGetFolderPathW; }
+        SharpOSHost_DebugPrintForced("[GetProcAddress shell32] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_MPR_HMODULE && name != nullptr) {
+        // WNetGetConnectionW: PS PSDrive auto-mount calls this for every
+        // candidate drive to decide local vs network. Returning
+        // ERROR_NOT_CONNECTED tells PS "this is a local drive" and the C:
+        // PSDrive registers normally. Without this stub the entire init
+        // cascade aborts.
+        if (sharpos_streq(name, "WNetGetConnectionW")
+         || sharpos_streq(name, "WNetGetConnection")) {
+            g_LastError = 0;
+            return (void*)&WNetGetConnectionW;
+        }
+        SharpOSHost_DebugPrintForced("[GetProcAddress mpr] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_IPHLPAPI_HMODULE && name != nullptr) {
+        // GetAdaptersAddresses: PS PSDrive enumeration walks network adapters.
+        // Returning ERROR_NO_DATA tells PS "no adapters" and init proceeds.
+        if (sharpos_streq(name, "GetAdaptersAddresses")) {
+            g_LastError = 0;
+            return (void*)&GetAdaptersAddresses;
+        }
+        SharpOSHost_DebugPrintForced("[GetProcAddress iphlpapi] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_USER32_HMODULE && name != nullptr) {
+        // step126.11: user32 — system-wide UI/accessibility queries.
+        if (sharpos_streq(name, "SystemParametersInfoW")) { g_LastError = 0; return (void*)&SystemParametersInfoW; }
+        if (sharpos_streq(name, "SystemParametersInfoA")) { g_LastError = 0; return (void*)&SystemParametersInfoA; }
+        if (sharpos_streq(name, "SystemParametersInfo"))  { g_LastError = 0; return (void*)&SystemParametersInfoW; }
+        if (sharpos_streq(name, "GetSystemMetrics"))      { g_LastError = 0; return (void*)&GetSystemMetrics; }
+        if (sharpos_streq(name, "GetConsoleWindow"))      { g_LastError = 0; return (void*)&GetConsoleWindow; }
+        SharpOSHost_DebugPrintForced("[GetProcAddress user32] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_AMSI_HMODULE && name != nullptr) {
+        if (sharpos_streq(name, "AmsiInitialize"))      { g_LastError = 0; return (void*)&AmsiInitialize; }
+        if (sharpos_streq(name, "AmsiUninitialize"))    { g_LastError = 0; return (void*)&AmsiUninitialize; }
+        if (sharpos_streq(name, "AmsiOpenSession"))     { g_LastError = 0; return (void*)&AmsiOpenSession; }
+        if (sharpos_streq(name, "AmsiCloseSession"))    { g_LastError = 0; return (void*)&AmsiCloseSession; }
+        if (sharpos_streq(name, "AmsiScanString"))      { g_LastError = 0; return (void*)&AmsiScanString; }
+        if (sharpos_streq(name, "AmsiScanBuffer"))      { g_LastError = 0; return (void*)&AmsiScanBuffer; }
+        if (sharpos_streq(name, "AmsiNotifyOperation")) { g_LastError = 0; return (void*)&AmsiNotifyOperation; }
+        if (sharpos_streq(name, "AmsiNotifyOperationA")){ g_LastError = 0; return (void*)&AmsiNotifyOperationA; }
+        SharpOSHost_DebugPrintForced("[GetProcAddress amsi] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
+    if (mod == SHARPOS_WLDP_HMODULE && name != nullptr) {
+        // step126.4: Lock Down Policy — all stubs return "no restrictions".
+        if (sharpos_streq(name, "WldpGetLockdownPolicy"))         { g_LastError = 0; return (void*)&WldpGetLockdownPolicy; }
+        if (sharpos_streq(name, "WldpQueryDynamicCodeTrust"))     { g_LastError = 0; return (void*)&WldpQueryDynamicCodeTrust; }
+        if (sharpos_streq(name, "WldpSetDynamicCodeTrust"))       { g_LastError = 0; return (void*)&WldpSetDynamicCodeTrust; }
+        if (sharpos_streq(name, "WldpIsClassInApprovedList"))     { g_LastError = 0; return (void*)&WldpIsClassInApprovedList; }
+        if (sharpos_streq(name, "WldpQueryWindowsLockdownMode"))  { g_LastError = 0; return (void*)&WldpQueryWindowsLockdownMode; }
+        // PS 7.x uses WldpQueryWindowsLockdownPolicy (newer name). Without
+        // this stub PS catches EntryPointNotFoundException and defaults to
+        // Enforce mode → ConstrainedLanguage → built-in cmdlets do not
+        // auto-load → "Get-ChildItem is not recognized". Same signature
+        // (UNLOCKED = 0), so just alias to the existing Mode handler.
+        if (sharpos_streq(name, "WldpQueryWindowsLockdownPolicy")){ g_LastError = 0; return (void*)&WldpQueryWindowsLockdownMode; }
+        if (sharpos_streq(name, "WldpIsDynamicCodePolicyEnabled")){ g_LastError = 0; return (void*)&WldpIsDynamicCodePolicyEnabled; }
+        if (sharpos_streq(name, "WldpCanExecuteFile"))            { g_LastError = 0; return (void*)&WldpCanExecuteFile; }
+        SharpOSHost_DebugPrintForced("[GetProcAddress wldp] unknown name=");
         SharpOSHost_DebugPrintForced(name);
         SharpOSHost_DebugPrintForced("\n");
         g_LastError = 127;
@@ -4228,6 +6161,11 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"GetComputerNameExW"))           return (void*)&GetComputerNameExW;
     if (sharpos_streq(n,"GetVersionExW"))                return (void*)&GetVersionExW;
     if (sharpos_streq(n,"RtlGetVersion"))                return (void*)&RtlGetVersion;
+    if (sharpos_streq(n,"RtlQueryProcessPlaceholderCompatibilityMode")) return (void*)&RtlQueryProcessPlaceholderCompatibilityMode;
+    if (sharpos_streq(n,"GetLogicalDrives"))             return (void*)&GetLogicalDrives;
+    if (sharpos_streq(n,"GetVolumeInformationW"))        return (void*)&GetVolumeInformationW;
+    if (sharpos_streq(n,"GetDriveTypeW"))                return (void*)&GetDriveTypeW;
+    if (sharpos_streq(n,"K32EnumProcesses"))             return (void*)&K32EnumProcesses;
     if (sharpos_streq(n,"GetFileAttributesExW"))         return (void*)&GetFileAttributesExW;
     if (sharpos_streq(n,"GetFileAttributesW"))           return (void*)&GetFileAttributesW;
     if (sharpos_streq(n,"FindFirstFileW"))               return (void*)&FindFirstFileW;
@@ -4244,6 +6182,48 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"FreeEnvironmentStringsW"))      return (void*)&FreeEnvironmentStringsW;
     if (sharpos_streq(n,"GetCommandLineW"))              return (void*)&GetCommandLineW;
     if (sharpos_streq(n,"GetFullPathNameW"))             return (void*)&GetFullPathNameW;
+    // step125: advapi32 Registry (empty subsystem in C# kernel side).
+    if (sharpos_streq(n,"RegOpenKeyExW"))                return (void*)&RegOpenKeyExW;
+    if (sharpos_streq(n,"RegCloseKey"))                  return (void*)&RegCloseKey;
+    if (sharpos_streq(n,"RegQueryValueExW"))             return (void*)&RegQueryValueExW;
+    if (sharpos_streq(n,"RegEnumKeyExW"))                return (void*)&RegEnumKeyExW;
+    if (sharpos_streq(n,"RegEnumValueW"))                return (void*)&RegEnumValueW;
+    if (sharpos_streq(n,"RegQueryInfoKeyW"))             return (void*)&RegQueryInfoKeyW;
+    if (sharpos_streq(n,"RegCreateKeyExW"))              return (void*)&RegCreateKeyExW;
+    if (sharpos_streq(n,"RegFlushKey"))                  return (void*)&RegFlushKey;
+    // step126: kernel32 Console facade
+    if (sharpos_streq(n,"GetStdHandle"))                 return (void*)&GetStdHandle;
+    if (sharpos_streq(n,"WriteConsoleW"))                return (void*)&WriteConsoleW;
+    if (sharpos_streq(n,"WriteFile"))                    return (void*)&WriteFile;
+    if (sharpos_streq(n,"GetConsoleMode"))               return (void*)&GetConsoleMode;
+    if (sharpos_streq(n,"SetConsoleMode"))               return (void*)&SetConsoleMode;
+    if (sharpos_streq(n,"GetFileType"))                  return (void*)&GetFileType;
+    if (sharpos_streq(n,"GetConsoleScreenBufferInfo"))   return (void*)&GetConsoleScreenBufferInfo;
+    if (sharpos_streq(n,"SetConsoleCursorPosition"))     return (void*)&SetConsoleCursorPosition;
+    if (sharpos_streq(n,"SetConsoleTextAttribute"))      return (void*)&SetConsoleTextAttribute;
+    // step126.9: W-suffixed aliases — same impl as the non-suffixed version.
+    // (Some PowerShell binaries import these with the W suffix even though
+    // the function takes only HANDLE; we just map both to the same shim.)
+    if (sharpos_streq(n,"GetConsoleModeW"))              return (void*)&GetConsoleMode;
+    if (sharpos_streq(n,"GetConsoleScreenBufferInfoW"))  return (void*)&GetConsoleScreenBufferInfo;
+    if (sharpos_streq(n,"SetConsoleCtrlHandler"))        return (void*)&SetConsoleCtrlHandler;
+    if (sharpos_streq(n,"SetConsoleCtrlHandlerW"))       return (void*)&SetConsoleCtrlHandler;
+    if (sharpos_streq(n,"GetStartupInfoW"))              return (void*)&GetStartupInfoW;
+    if (sharpos_streq(n,"GetStartupInfoA"))              return (void*)&GetStartupInfoA;
+    if (sharpos_streq(n,"GetStartupInfoWA"))             return (void*)&GetStartupInfoW;  // typo'd by PowerShell
+    if (sharpos_streq(n,"OpenProcess"))                  return (void*)&OpenProcess;
+    if (sharpos_streq(n,"GetCPInfoExW"))                 return (void*)&GetCPInfoExW;
+    if (sharpos_streq(n,"GetCPInfoExA"))                 return (void*)&GetCPInfoExA;
+    if (sharpos_streq(n,"ReadConsole"))                  return (void*)&ReadConsoleW;
+    if (sharpos_streq(n,"ReadConsoleW"))                 return (void*)&ReadConsoleW;
+    if (sharpos_streq(n,"ReadConsoleA"))                 return (void*)&ReadConsoleA;
+    // step126.5: directory ops + env
+    if (sharpos_streq(n,"CreateDirectoryW"))             return (void*)&CreateDirectoryW;
+    if (sharpos_streq(n,"RemoveDirectoryW"))             return (void*)&RemoveDirectoryW;
+    if (sharpos_streq(n,"SetEnvironmentVariableW"))      return (void*)&SetEnvironmentVariableW;
+    if (sharpos_streq(n,"SetEnvironmentVariableA"))      return (void*)&SetEnvironmentVariableA;
+    if (sharpos_streq(n,"FormatMessageW"))               return (void*)&FormatMessageW;
+    if (sharpos_streq(n,"FormatMessageA"))               return (void*)&FormatMessageA;
     // Files / pipes
     if (sharpos_streq(n,"CreateFileW"))                  return (void*)&CreateFileW;
     if (sharpos_streq(n,"CreateFileMappingW"))           return (void*)&CreateFileMappingW;
@@ -4251,11 +6231,19 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"CreateNamedPipeA"))             return (void*)&CreateNamedPipeA;
     if (sharpos_streq(n,"ReadFile"))                     return (void*)&ReadFile;
     if (sharpos_streq(n,"SetFilePointer"))               return (void*)&SetFilePointer;
+    if (sharpos_streq(n,"SetFilePointerEx"))             return (void*)&SetFilePointerEx;
+    if (sharpos_streq(n,"GetFileInformationByHandleEx")) return (void*)&GetFileInformationByHandleEx;
+    if (sharpos_streq(n,"FillConsoleOutputCharacterW")) return (void*)&FillConsoleOutputCharacterW;
+    if (sharpos_streq(n,"FillConsoleOutputCharacter"))  return (void*)&FillConsoleOutputCharacterW;
+    if (sharpos_streq(n,"FillConsoleOutputCharacterA")) return (void*)&FillConsoleOutputCharacterA;
+    if (sharpos_streq(n,"FillConsoleOutputAttribute"))  return (void*)&FillConsoleOutputAttribute;
     if (sharpos_streq(n,"GetFileSize"))                  return (void*)&GetFileSize;
     // Misc / EH / icache
     if (sharpos_streq(n,"FlushInstructionCache"))        return (void*)&FlushInstructionCache;
     if (sharpos_streq(n,"FlushProcessWriteBuffers"))     return (void*)&FlushProcessWriteBuffers;
     if (sharpos_streq(n,"NtQuerySystemInformation"))     return (void*)&NtQuerySystemInformation;
+    if (sharpos_streq(n,"NtQueryDirectoryFile"))         return (void*)&NtQueryDirectoryFile;
+    if (sharpos_streq(n,"NtClose"))                      return (void*)&NtClose;
     if (sharpos_streq(n,"RtlCaptureContext"))            return (void*)&RtlCaptureContext;
     if (sharpos_streq(n,"RtlInstallFunctionTableCallback")) return (void*)&RtlInstallFunctionTableCallback;
     if (sharpos_streq(n,"RtlDeleteFunctionTable"))       return (void*)&RtlDeleteFunctionTable;
