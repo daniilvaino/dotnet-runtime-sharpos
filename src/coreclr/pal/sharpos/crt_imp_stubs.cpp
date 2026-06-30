@@ -85,7 +85,8 @@ extern "C" __attribute__((weak)) int      SharpOSHost_GetVolumeInformation(uint3
 extern "C" __attribute__((weak)) int      SharpOSHost_EnumProcesses(uint32_t* /*p*/) { return 0; }
 extern "C" __attribute__((weak)) int      SharpOSHost_AmsiNotifyOperation(void) { return 0; }
 extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetDriveType(int /*c*/) { return 3; }
-extern "C" __attribute__((weak)) uint32_t SharpOSHost_FindDirEntry(const uint8_t* /*p*/, uint32_t /*i*/, wchar_t* /*o*/, uint32_t /*c*/, uint32_t* /*a*/) { return 0; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_FindDirEntry(const uint8_t* /*p*/, uint32_t /*i*/, wchar_t* /*o*/, uint32_t /*c*/, uint32_t* /*a*/, uint32_t* /*s*/) { return 0; }
+extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetEnvVar(const uint8_t* /*n*/, int32_t /*nl*/, uint8_t* /*o*/, uint32_t /*c*/, uint32_t* outErr) { if (outErr) *outErr = 203; return 0; }
 extern "C" __attribute__((weak)) int      SharpOSHost_CloseHandle(uint64_t /*h*/) { return 1; }
 extern "C" __attribute__((weak)) void     SharpOSHost_Sleep(uint32_t /*ms*/) {}
 extern "C" __attribute__((weak)) int      SharpOSHost_SwitchToThread() { return 1; }
@@ -1930,6 +1931,12 @@ CRT_REAL(FlushViewOfFile);
 // window styles, message handling. On unikernel there are no windows;
 // stubs return null/zero/default to indicate "no window context".
 #define SHARPOS_USER32_HMODULE    ((void*)(uintptr_t)0x05E32100U)
+// wintrust.dll — Authenticode signature verification. PS' SystemPolicy
+// calls WinVerifyTrust on pwsh.dll to decide FullLanguage vs CLM. When
+// the library can't be loaded PS treats trust as "couldn't determine →
+// fail-secure to ConstrainedLanguage". Sentinel + WinVerifyTrust → 0
+// (ERROR_SUCCESS = verified trusted) makes PS go FullLanguage.
+#define SHARPOS_WINTRUST_HMODULE  ((void*)(uintptr_t)0x05741457U)
 
 // step126.19: mpr.dll (Multiple Provider Router) — network drive enumeration.
 // iphlpapi.dll — IP Helper / network interface info. Both touched by PS at
@@ -2084,6 +2091,13 @@ static int sharpos_is_user32(const wchar_t* name) {
         || sharpos_wstr_iends_with(name, "user32.dll.dll");
 }
 
+static int sharpos_is_wintrust(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "wintrust")
+        || sharpos_wstr_iends_with(name, "wintrust.dll")
+        || sharpos_wstr_iends_with(name, "wintrust.dll.dll");
+}
+
 static int sharpos_is_mpr(const wchar_t* name) {
     if (name == nullptr) return 0;
     return sharpos_wstr_iends_with(name, "mpr")
@@ -2197,6 +2211,11 @@ extern "C" void* LoadLibraryExW(const wchar_t* lpLibFileName, void* /*hFile*/, u
         SharpOSHost_DebugPrint("[LoadLibrary mpr] returning sentinel handle\n");
         g_LastError = 0;
         return SHARPOS_MPR_HMODULE;
+    }
+    if (sharpos_is_wintrust(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary wintrust] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_WINTRUST_HMODULE;
     }
     if (sharpos_is_iphlpapi(lpLibFileName)) {
         SharpOSHost_DebugPrint("[LoadLibrary iphlpapi] returning sentinel handle\n");
@@ -2586,20 +2605,37 @@ CRT_REAL(GetFileInformationByHandleEx);
 // Our UART doesn't have a buffer to overwrite; succeed silently so the host
 // doesn't throw. The cursor still moves via SetConsoleCursorPosition + the
 // terminal's own scroll, which is enough for usable shell output.
-extern "C" int FillConsoleOutputCharacterW(void* /*hConsole*/, wchar_t /*cChar*/,
-                                            uint32_t nLength, uint32_t /*dwCoord*/,
+// Forward decl — full body around line 5054.
+extern "C" int SharpOSHost_ConsoleWriteW(uint64_t hConsole, const wchar_t* buffer,
+                                         uint32_t nChars, uint32_t* charsWritten);
+
+// PS Clear-Host pattern: fill(' ', whole_buffer, 0,0) + fill(attrs,whole,0,0) +
+// SetCursorPosition(0,0). When we see a long run of spaces at coord 0, emit
+// ANSI \e[2J\e[H so both UART terminal AND our FbTty parser do a real clear.
+static void sharpos_maybe_clear_screen(wchar_t cChar, uint32_t nLength, uint32_t dwCoord) {
+    if (cChar != L' ' || nLength < 100 || dwCoord != 0) return;
+    static const wchar_t k_clear[] = { 0x1B, L'[', L'2', L'J', 0x1B, L'[', L'H', 0 };
+    uint32_t written = 0;
+    SharpOSHost_ConsoleWriteW((uint64_t)(uintptr_t)SharpOSHost_GetStdHandle(-11),
+                              k_clear, 7, &written);
+}
+
+extern "C" int FillConsoleOutputCharacterW(void* /*hConsole*/, wchar_t cChar,
+                                            uint32_t nLength, uint32_t dwCoord,
                                             uint32_t* lpNumberWritten) {
     TRACE_REAL(FillConsoleOutputCharacterW);
+    sharpos_maybe_clear_screen(cChar, nLength, dwCoord);
     if (lpNumberWritten) *lpNumberWritten = nLength;
     g_LastError = 0;
     return 1;
 }
 CRT_REAL(FillConsoleOutputCharacterW);
 
-extern "C" int FillConsoleOutputCharacterA(void* /*hConsole*/, char /*cChar*/,
-                                            uint32_t nLength, uint32_t /*dwCoord*/,
+extern "C" int FillConsoleOutputCharacterA(void* /*hConsole*/, char cChar,
+                                            uint32_t nLength, uint32_t dwCoord,
                                             uint32_t* lpNumberWritten) {
     TRACE_REAL(FillConsoleOutputCharacterA);
+    sharpos_maybe_clear_screen((wchar_t)cChar, nLength, dwCoord);
     if (lpNumberWritten) *lpNumberWritten = nLength;
     g_LastError = 0;
     return 1;
@@ -2783,13 +2819,11 @@ extern "C" int32_t NtQueryDirectoryFile(
     while (!d->exhausted) {
         wchar_t nameBuf[260];
         uint32_t attrs = 0;
+        uint32_t fileSize = 0;
         uint32_t nameLen = SharpOSHost_FindDirEntry(d->dirAscii, d->nextIndex,
-                                                     nameBuf, 260, &attrs);
+                                                     nameBuf, 260, &attrs, &fileSize);
         if (nameLen == 0) { d->exhausted = 1; break; }
 
-        // Skip "." and ".." synthetics — BCL's enumerator filters them out
-        // anyway, but our FAT doesn't emit them. If a future emit adds
-        // them, the line below stays a no-op.
         uint32_t nameBytes = nameLen * 2;
         uint32_t entrySize = 0x44 + nameBytes;
         entrySize = (entrySize + 7) & ~7u;
@@ -2804,6 +2838,8 @@ extern "C" int32_t NtQueryDirectoryFile(
         for (int i = 0; i < (int)entrySize; i++) p[i] = 0;
         *(uint32_t*)(p + 0x00) = entrySize;            // NextEntryOffset (fixed up later if last)
         *(uint32_t*)(p + 0x04) = d->nextIndex;         // FileIndex
+        *(uint64_t*)(p + 0x28) = fileSize;             // EndOfFile (logical size)
+        *(uint64_t*)(p + 0x30) = fileSize;             // AllocationSize
         *(uint32_t*)(p + 0x38) = attrs;                // FileAttributes
         *(uint32_t*)(p + 0x3C) = nameBytes;            // FileNameLength (bytes)
         wchar_t* nameDst = (wchar_t*)(p + 0x44);
@@ -3355,19 +3391,73 @@ CRT_REAL(VirtualQuery);
 static const wchar_t k_empty_w[] = { 0 };
 static uint32_t k_ERROR_ENVVAR_NOT_FOUND = 203;
 
-// Silent (no TRACE_REAL): CoreCLR queries hundreds of config knobs at init,
-// each as GetEnvironmentVariable*. With trace on, screen scrolls past
-// actually interesting events. We can re-enable temporarily if specific
-// env var lookup needs debugging.
-extern "C" uint32_t GetEnvironmentVariableW(const wchar_t* /*name*/, wchar_t* /*buf*/, uint32_t /*size*/) {
-    g_LastError = k_ERROR_ENVVAR_NOT_FOUND;
-    return 0;
+// Kernel-side env-var policy (OS/src/PAL/SharpOSHost/EnvironmentPolicy.cs).
+// Fork side is pure ABI: marshal wide/ASCII name → ASCII bytes, call kernel,
+// marshal value back into caller's wide/ASCII buffer with the Win32 length
+// protocol (chars-excl-NUL on success / required-incl-NUL on overflow).
+extern "C" uint32_t SharpOSHost_GetEnvVar(const uint8_t* name, int32_t nameLen,
+                                          uint8_t* outBuf, uint32_t outBufSize,
+                                          uint32_t* outErr);
+
+// Convert a wide name to ASCII (env names are always 7-bit). Returns
+// length or -1 if it contains non-ASCII (which can't be an env-var name).
+// Stops at NUL.
+static int sharpos_env_widen_name_to_ascii(const wchar_t* name, uint8_t* out, int outCap) {
+    if (name == nullptr || out == nullptr) return -1;
+    int i = 0;
+    for (; i + 1 < outCap; i++) {
+        wchar_t c = name[i];
+        if (c == 0) break;
+        if (c > 0x7F) return -1;
+        out[i] = (uint8_t)c;
+    }
+    out[i] = 0;
+    return i;
+}
+
+extern "C" uint32_t GetEnvironmentVariableW(const wchar_t* name, wchar_t* buf, uint32_t size) {
+    uint8_t asciiName[128];
+    int nl = sharpos_env_widen_name_to_ascii(name, asciiName, sizeof(asciiName));
+    if (nl <= 0) { g_LastError = k_ERROR_ENVVAR_NOT_FOUND; return 0; }
+
+    // Kernel writes UTF-8 bytes; we widen one byte at a time below. To keep
+    // a single kernel ABI we slurp into a stack ASCII buffer first then
+    // widen — env values here are always small (<= 64 bytes).
+    uint8_t valueBuf[128];
+    uint32_t err = 0;
+    uint32_t bytes = SharpOSHost_GetEnvVar(asciiName, nl, valueBuf,
+                                            (uint32_t)sizeof(valueBuf), &err);
+    if (err != 0 && err != 122) { g_LastError = err; return 0; }
+    // bytes is value length (excl NUL). Required wide-buffer = bytes + 1.
+    if (buf == nullptr || size < bytes + 1) {
+        g_LastError = 0;
+        return bytes + 1;                            // required size incl NUL
+    }
+    for (uint32_t i = 0; i < bytes; i++) buf[i] = (wchar_t)valueBuf[i];
+    buf[bytes] = 0;
+    g_LastError = 0;
+    return bytes;
 }
 CRT_REAL(GetEnvironmentVariableW);
 
-extern "C" uint32_t GetEnvironmentVariableA(const char* /*name*/, char* /*buf*/, uint32_t /*size*/) {
-    g_LastError = k_ERROR_ENVVAR_NOT_FOUND;
-    return 0;
+extern "C" uint32_t GetEnvironmentVariableA(const char* name, char* buf, uint32_t size) {
+    if (name == nullptr) { g_LastError = k_ERROR_ENVVAR_NOT_FOUND; return 0; }
+    int nl = 0;
+    while (name[nl] != 0 && nl < 127) nl++;
+
+    uint8_t valueBuf[128];
+    uint32_t err = 0;
+    uint32_t bytes = SharpOSHost_GetEnvVar((const uint8_t*)name, nl, valueBuf,
+                                            (uint32_t)sizeof(valueBuf), &err);
+    if (err != 0 && err != 122) { g_LastError = err; return 0; }
+    if (buf == nullptr || size < bytes + 1) {
+        g_LastError = 0;
+        return bytes + 1;
+    }
+    for (uint32_t i = 0; i < bytes; i++) buf[i] = (char)valueBuf[i];
+    buf[bytes] = 0;
+    g_LastError = 0;
+    return bytes;
 }
 CRT_REAL(GetEnvironmentVariableA);
 
@@ -4029,8 +4119,9 @@ static bool sharpos_iter_step(DirIterState* st, void* lpFindFileData) {
     if (st == nullptr || st->exhausted) return false;
     wchar_t nameBuf[260];
     uint32_t attrs = 0;
+    uint32_t fileSize = 0;
     uint32_t nameLen = SharpOSHost_FindDirEntry(st->dirAscii, st->nextIndex,
-                                                 nameBuf, 260, &attrs);
+                                                 nameBuf, 260, &attrs, &fileSize);
     st->nextIndex++;
     if (nameLen == 0) { st->exhausted = 1; return false; }
     sharpos_fill_find_data(lpFindFileData, attrs, nameBuf, (int)nameLen);
@@ -4135,6 +4226,21 @@ CRT_REAL(GetCommandLineW);
 
 extern "C" uint32_t GetConsoleOutputCP(void) { TRACE_REAL(GetConsoleOutputCP); return 437; }
 CRT_REAL(GetConsoleOutputCP);
+
+// Codepage queries used by BCL Encoding.OEM / Encoding.ASCII fallback paths.
+// PS Get-Content goes through Encoding detection on file read → these must
+// resolve or PS throws EntryPointNotFoundException at the read site.
+//   437  = OEM US (DOS English)
+//   1252 = Windows-1252 (Western European, ANSI default)
+//   65001 = UTF-8
+extern "C" uint32_t GetOEMCP(void) { TRACE_REAL(GetOEMCP); return 437; }
+CRT_REAL(GetOEMCP);
+
+extern "C" uint32_t GetACP(void) { TRACE_REAL(GetACP); return 1252; }
+CRT_REAL(GetACP);
+
+extern "C" uint32_t GetConsoleCP(void) { TRACE_REAL(GetConsoleCP); return 437; }
+CRT_REAL(GetConsoleCP);
 
 // ─── step125: advapi32 Registry — thin marshal to kernel C# ────────────
 // All policy and state live in OS/src/PAL/SharpOSHost/Registry.cs
@@ -4789,6 +4895,19 @@ extern "C" unsigned long WNetGetConnectionW(const wchar_t* /*lpLocalName*/,
     return 2250;  // ERROR_NOT_CONNECTED
 }
 CRT_REAL(WNetGetConnectionW);
+
+// WinVerifyTrust: Authenticode signature verification entry point.
+//   LONG WinVerifyTrust(HWND hwnd, GUID* pgActionID, void* pWVTData);
+// Return TRUST_E_NOSIGNATURE (0x800B0100) = "file is not signed". On success
+// (return 0) PS extracts the signer cert via WTHelperProvDataFromStateData;
+// we didn't populate pWVTData, so that extraction throws. Returning
+// "not signed" makes PS skip cert extraction and fall back to AppLocker /
+// system policy — both stubbed to "trusted" → FullLanguage.
+extern "C" long WinVerifyTrust(void* /*hwnd*/, void* /*pgActionID*/, void* /*pWVTData*/) {
+    TRACE_REAL(WinVerifyTrust);
+    return (long)0x800B0100;  // TRUST_E_NOSIGNATURE
+}
+CRT_REAL(WinVerifyTrust);
 
 // UINT GetDriveTypeW(LPCWSTR lpRootPathName) — extract drive letter, delegate.
 extern "C" unsigned int GetDriveTypeW(const wchar_t* lpRootPathName) {
@@ -5678,6 +5797,19 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         g_LastError = 127;
         return nullptr;
     }
+    if (mod == SHARPOS_WINTRUST_HMODULE && name != nullptr) {
+        // WinVerifyTrust: PS SystemPolicy probes Authenticode signature on
+        // pwsh.dll to decide CLM. Return 0 = ERROR_SUCCESS = trusted.
+        if (sharpos_streq(name, "WinVerifyTrust")) {
+            g_LastError = 0;
+            return (void*)&WinVerifyTrust;
+        }
+        SharpOSHost_DebugPrintForced("[GetProcAddress wintrust] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
     if (mod == SHARPOS_IPHLPAPI_HMODULE && name != nullptr) {
         // GetAdaptersAddresses: PS PSDrive enumeration walks network adapters.
         // Returning ERROR_NO_DATA tells PS "no adapters" and init proceeds.
@@ -6146,6 +6278,9 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"MultiByteToWideChar"))          return (void*)&MultiByteToWideChar;
     if (sharpos_streq(n,"WideCharToMultiByte"))          return (void*)&WideCharToMultiByte;
     if (sharpos_streq(n,"GetConsoleOutputCP"))           return (void*)&GetConsoleOutputCP;
+    if (sharpos_streq(n,"GetOEMCP"))                     return (void*)&GetOEMCP;
+    if (sharpos_streq(n,"GetACP"))                       return (void*)&GetACP;
+    if (sharpos_streq(n,"GetConsoleCP"))                 return (void*)&GetConsoleCP;
     if (sharpos_streq(n,"GetCPInfo"))                    return (void*)&GetCPInfo;
     if (sharpos_streq(n,"OutputDebugStringA"))           return (void*)&OutputDebugStringA;
     if (sharpos_streq(n,"OutputDebugStringW"))           return (void*)&OutputDebugStringW;
