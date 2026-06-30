@@ -14,10 +14,7 @@
 #include "vars.hpp"
 #include "eeconfig.h"
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-#endif
+#include "sharpos_probes.h"
 #include "dllimport.h"
 #include "comdelegate.h"
 #include "dbginterface.h"

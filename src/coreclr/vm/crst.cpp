@@ -21,12 +21,7 @@
 #include <crsttypes_generated.h>
 #undef __IN_CRST_CPP
 
-#if defined(TARGET_SHARPOS)
-// SharpOS port (Phase 6.1.b diag): host-side serial print used by Crst::Enter
-// uninitialized-lock localization probe below.
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-#endif
+#include "sharpos_probes.h"
 
 #ifndef DACCESS_COMPILE
 Volatile<LONG> g_ShutdownCrstUsageCount = 0;

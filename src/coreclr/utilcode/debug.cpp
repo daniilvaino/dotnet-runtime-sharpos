@@ -50,9 +50,8 @@ void CreateCrashDumpIfEnabled(bool stackoverflow = false);
 // CheckRegDisplaySP suppression (feedback: targeted, not sledgehammer —
 // this targets the assert *fatality mechanism*, not the whole subsystem,
 // and preserves diagnostics).
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
 #endif
+#include "sharpos_probes.h"
 
 // Global state counter to implement SUPPRESS_ALLOCATION_ASSERTS_IN_THIS_SCOPE.
 Volatile<LONG> g_DbgSuppressAllocationAsserts = 0;

@@ -7,9 +7,7 @@
 #include "clr/fs/path.h"
 using namespace clr::fs;
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-#endif
+#include "sharpos_probes.h"
 
 // Specifies whether hostpolicy is embedded in executable or standalone
 extern bool g_hostpolicy_embedded;

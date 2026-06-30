@@ -47,9 +47,7 @@
 #include "roapi.h"
 #endif // FEATURE_COMINTEROP_APARTMENT_SUPPORT
 
-#if defined(TARGET_SHARPOS)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-#endif
+#include "sharpos_probes.h"
 
 #ifdef FEATURE_SPECIAL_USER_MODE_APC
 #include "asmconstants.h"

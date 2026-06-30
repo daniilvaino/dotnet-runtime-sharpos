@@ -30,10 +30,7 @@
 #ifndef TARGET_UNIX
 #include "utilcode.h"
 #endif
-
-#if defined(TARGET_SHARPOS)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-#endif
+#include "sharpos_probes.h"
 
 // For the following helpers, we make no attempt to synchronize.  The app developer
 // is responsible for managing their own race conditions.

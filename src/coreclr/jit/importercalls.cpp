@@ -2,11 +2,9 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 #include "jitpch.h"
+#include "sharpos_probes.h"
 
 #if defined(TARGET_SHARPOS)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-
 static void SharpOS_JitPrintCreateSpanFallback(const char* reason, uint64_t targetAbi, const char* runtimeHandleUnderlying)
 {
     SharpOSHost_DebugPrint("[JIT CreateSpan] fallback reason=");

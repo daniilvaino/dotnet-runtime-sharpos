@@ -50,11 +50,8 @@ static void SharpOS_EH_Write(const char* s)
 
 #include <errorrep.h>
 
+#include "sharpos_probes.h"
 #if defined(TARGET_SHARPOS)
-// SharpOS port (Phase 6.1.b diag): host-side serial print used by
-// ThrowTypeLoadException instrumentation below.
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
 
 // Print a UTF-8 (null-terminated) string verbatim. NULL → "(null)".
 static inline void sharpos_print_utf8(const char* s)

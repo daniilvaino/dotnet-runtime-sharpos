@@ -44,11 +44,7 @@
 
 extern void STDMETHODCALLTYPE EEShutDown(BOOL fIsDllUnloading);
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-// SharpOS twin-test diag: print real AppContext.s_dataStore address.
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-#endif
+#include "sharpos_probes.h"
 
 //***************************************************************************
 

@@ -14,9 +14,9 @@
 #include "runtimecallablewrapper.h"
 #endif
 
+#include "sharpos_probes.h"
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
 extern "C" void SharpOSHost_DebugPrintForced(const char* msg);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t v);
 #endif
 
 BOOL FinalizerThread::fQuitFinalizer = FALSE;

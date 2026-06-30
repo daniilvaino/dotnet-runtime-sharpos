@@ -18,12 +18,12 @@
 #include "exinfo.h"
 #include "configuration.h"
 
+#include "sharpos_probes.h"
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
 // File-scope declarations — memory rule: extern "C" cannot live inside a
 // function body (broke fork build before). Used by PCRE diagnostics around
 // the IsProcessCorruptedStateException early-fatal check.
 extern "C" void SharpOSHost_DebugPrintForced(const char* msg);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t v);
 #endif
 
 #if defined(TARGET_X86)
@@ -2310,13 +2310,6 @@ UMEntryPrestubUnwindFrameChainHandler(
 }
 
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-// Phase D iteration 1 — extern "C" declarations must be at file scope,
-// not inside a function body (memory: extern_c_only_file_scope).
-// crt_imp_stubs.cpp already declares these weak; we just re-declare
-// here so this TU sees them with C linkage.
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-
 // Phase D iteration 3 — expose FrameChain head to kernel C# walker.
 // The walker reads `Thread::m_pFrame` on stub-frame detection and
 // uses InlinedCallFrame fields to skip past CoreCLR's managed-to-

@@ -47,12 +47,7 @@
 #include "virtualcallstub.h"
 #include "stringarraylist.h"
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-// SharpOS port (Phase 6.1.b diag): host-side serial print used by inline
-// TypeLoad/TypeDef diagnostics below.
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-#endif
+#include "sharpos_probes.h"
 
 NameHandle::NameHandle(ModuleBase* pModule, mdToken token) :
     m_nameSpace(NULL),

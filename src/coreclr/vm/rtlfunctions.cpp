@@ -15,9 +15,8 @@
 
 #include "rtlfunctions.h"
 
+#include "sharpos_probes.h"
 #if defined(TARGET_SHARPOS)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
 // __imp_RtlVirtualUnwind is the resolvable data pointer emitted by
 // CRT_STUB(RtlVirtualUnwind) in crt_imp_stubs.cpp; at the final kernel
 // image link (/FORCE:MULTIPLE, OS.obj first) it points to the C#

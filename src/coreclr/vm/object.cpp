@@ -18,9 +18,8 @@
 #include "field.h"
 #include "argdestination.h"
 
+#include "sharpos_probes.h"
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
 extern "C" uint8_t* g_gc_lowest_address;
 extern "C" uint8_t* g_gc_highest_address;
 

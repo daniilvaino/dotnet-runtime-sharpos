@@ -10,10 +10,7 @@
 #include "excep.h"
 #include "pendingload.h"
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
-#endif
+#include "sharpos_probes.h"
 
 #ifndef DACCESS_COMPILE
 

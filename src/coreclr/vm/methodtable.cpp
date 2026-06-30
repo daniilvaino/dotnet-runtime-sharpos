@@ -6,9 +6,8 @@
 
 #include "common.h"
 
+#include "sharpos_probes.h"
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
-extern "C" void SharpOSHost_DebugPrint(const char*);
-extern "C" void SharpOSHost_DebugPrintHex(uint64_t);
 // step105 diag — NOT Verbose-gated, prints unconditionally
 extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
 #endif
