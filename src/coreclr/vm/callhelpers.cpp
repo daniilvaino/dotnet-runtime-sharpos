@@ -39,6 +39,17 @@ void AssertMulticoreJitAllowedModule(PCODE pTarget)
 // So all callers should call through CallDescrWorkerWithHandler (or a wrapper like MethodDesc::Call)
 // and get the platform-appropriate exception handling.
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+// Diagnostic only: last CallDescrData handed to the assembly worker, read by
+// the catch-resume traces in exceptionhandling.cpp.
+// A single "last value" global names the innermost call, which is not the one
+// that faults on return — nested calls overwrite it. Keep a chain instead: each
+// invocation links a record on its own frame, so the dump can print every
+// CallDescrData still live on the stack, outermost included.
+struct SosCallDescrLink { SosCallDescrLink* prev; uint64_t data; uint64_t target; };
+thread_local SosCallDescrLink* g_sosCallDescrChain = nullptr;
+#endif
+
 //*******************************************************************************
 void CallDescrWorkerWithHandler(
                 CallDescrData *   pCallDescrData,
@@ -56,7 +67,22 @@ void CallDescrWorkerWithHandler(
 
     BEGIN_CALL_TO_MANAGEDEX(fCriticalCall ? EEToManagedCriticalCall : EEToManagedDefault);
 
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    // CallDescrWorkerInternal keeps pCallDescrData in RBX across the managed
+    // call and reads pTarget/fpReturnSize through it on return. Recording the
+    // value here lets the catch-resume diagnostics print what RBX is supposed
+    // to hold, instead of inferring it from stack contents.
+    SosCallDescrLink __sosLink = { g_sosCallDescrChain,
+                                   (uint64_t)(uintptr_t)pCallDescrData,
+                                   (uint64_t)pCallDescrData->pTarget };
+    g_sosCallDescrChain = &__sosLink;
+#endif
+
     CallDescrWorker(pCallDescrData);
+
+#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+    g_sosCallDescrChain = __sosLink.prev;
+#endif
 
     END_CALL_TO_MANAGED();
 }

@@ -7,9 +7,33 @@
 #include "common.h"
 
 #include "sharpos_probes.h"
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
 // step105 diag — NOT Verbose-gated, prints unconditionally
 extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
+
+// Formats hex in-place rather than calling SharpOSHost_DebugPrintHex: a weak
+// no-op stub for that name lives in the PAL and wins the link, so values sent
+// through it print as nothing at all.
+static void SharpOS_RCI_Write(const char* s)
+{
+    int n = 0;
+    while (s[n] != 0) n++;
+    SharpOSHost_DebugWrite((const uint8_t*)s, n);
+}
+
+static void SharpOS_RCI_Hex(unsigned long long value)
+{
+    char buf[18];
+    buf[0] = '0';
+    buf[1] = 'x';
+    for (int i = 0; i < 16; i++)
+    {
+        unsigned shift = (unsigned)((15 - i) * 4);
+        unsigned nibble = (unsigned)((value >> shift) & 0xF);
+        buf[2 + i] = (char)(nibble < 10 ? ('0' + nibble) : ('A' + (nibble - 10)));
+    }
+    SharpOSHost_DebugWrite((const uint8_t*)buf, 18);
+}
 #endif
 
 #include "clsload.hpp"
@@ -3588,6 +3612,21 @@ BOOL MethodTable::RunClassInitEx(OBJECTREF *pThrowable)
         // Call the code method without touching MethodDesc if possible
         PCODE pCctorCode = pCanonMT->GetRestoredSlot(pCanonMT->GetClassConstructorSlot());
 
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // CallDescrWorkerInternal keeps its CallDescrData in RBX across this
+        // call and faults reading it back when the callee returns with RBX
+        // clobbered. Name the type and entry point on the way in, so the last
+        // line before such a fault identifies the class constructor at fault.
+        {
+            DefineFullyQualifiedNameForClassOnStack();
+            SharpOS_RCI_Write("[RCI] cctor type=");
+            SharpOS_RCI_Write(GetFullyQualifiedNameForClass(pCanonMT));
+            SharpOS_RCI_Write(" code=");
+            SharpOS_RCI_Hex((uint64_t)pCctorCode);
+            SharpOS_RCI_Write("\n");
+        }
+#endif
+
         if (pCanonMT->IsSharedByGenericInstantiations())
         {
             PREPARE_NONVIRTUAL_CALLSITE_USING_CODE(pCctorCode);
@@ -3603,6 +3642,15 @@ BOOL MethodTable::RunClassInitEx(OBJECTREF *pThrowable)
             CATCH_HANDLER_FOUND_NOTIFICATION_CALLSITE;
             CALL_MANAGED_METHOD_NORET(args);
         }
+
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+        // Pairs with the [RCI] cctor line above. A missing "returned" means the
+        // constructor never came back, which rules out a clobbered-register
+        // return as the explanation for the fault at CallDescrWorkerInternal+0x83.
+        SharpOS_RCI_Write("[RCI] cctor returned code=");
+        SharpOS_RCI_Hex((uint64_t)pCctorCode);
+        SharpOS_RCI_Write("\n");
+#endif
 
         STRESS_LOG1(LF_CLASSLOADER, LL_INFO100000, "RunClassInit: Returned Successfully from class constructor for type %pT\n", this);
 

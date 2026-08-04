@@ -25,6 +25,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// CRT allocators live in winapi_shim.cpp. Declared here rather than pulled in
+// via <stdlib.h>, whose declarations conflict with the stubs below; the ucrtbase
+// GetProcAddress branch hands these out to Interop.Ucrtbase.
+extern "C" void* malloc(size_t size);
+extern "C" void  free(void* p);
+extern "C" void* calloc(size_t n, size_t sz);
+extern "C" void* realloc(void* old, size_t s);
+
 // Per-thread LastError via gs:[0x68] (NT_TIB.LastErrorValue). clang-cl
 // intrinsics __readgsdword / __writegsdword are inline-expanded only
 // when <intrin.h> is included -- but that header transitively pulls
@@ -1233,20 +1241,24 @@ extern "C" int _fileno(void* stream) {
 }
 CRT_REAL(_fileno);
 
-// _write — POSIX write(fd, buf, count). Surface stdout/stderr to console
-// (with [_write fd=N] tag for filtering). Other fds — return error.
+// _write — POSIX write(fd, buf, count). This is a real output path, not a
+// diagnostic one: PowerShell writes to stderr through it, escape sequences
+// included. It used to replace every byte outside printable ASCII with '?'
+// and add a "[_write fd=N] " tag plus a newline, which turned the colour reset
+// "ESC[m" into "?m" — the opening "ESC[91m" went out through WriteConsoleW
+// intact, so the console stayed red from the first stderr message onward.
+// Forward the bytes verbatim to the same console sink WriteFile uses.
+// Both are defined further down; declared here so this stays above them.
+extern "C" uint64_t SharpOSHost_GetStdHandle(int nStdHandle);
+extern "C" int      SharpOSHost_ConsoleWriteFile(uint64_t hHandle, const unsigned char* buffer,
+                                                 uint32_t nBytes, uint32_t* numBytesWritten);
+
 extern "C" int _write(int fd, const void* buf, unsigned int count) {
     if (fd != 1 && fd != 2) return -1;
     if (!buf || count == 0) return 0;
-    SharpOSHost_DebugPrint(fd == 2 ? "[_write fd=2] " : "[_write fd=1] ");
-    const char* s = (const char*)buf;
-    char tmp[2] = { 0, 0 };
-    for (unsigned int i = 0; i < count; i++) {
-        char c = s[i];
-        tmp[0] = ((c >= 0x20 && c < 0x7F) || c == '\n' || c == '\t') ? c : '?';
-        SharpOSHost_DebugPrint(tmp);
-    }
-    SharpOSHost_DebugPrint("\n");
+    uint64_t h = SharpOSHost_GetStdHandle(fd == 2 ? -12 : -11);
+    uint32_t written = 0;
+    SharpOSHost_ConsoleWriteFile(h, (const unsigned char*)buf, count, &written);
     return (int)count;
 }
 CRT_REAL(_write);
@@ -1570,6 +1582,33 @@ extern "C" void* CreateMutexW(void* /*lpAttrs*/, int bInitialOwner, const wchar_
     return (void*)(uintptr_t)h;
 }
 CRT_REAL(CreateMutexW);
+
+extern "C" uint64_t SharpOSHost_OpenMutex(uint32_t* outLastError);
+
+// OpenMutexW opens an EXISTING named mutex. PSReadLine probes with it to find
+// out whether another instance already owns the terminal; kernel policy
+// (MutexBridge.cs) answers "no such name", which is the truth here.
+//
+// This has to exist as an export even to say no: without it the P/Invoke fails
+// to resolve, PSReadLine catches the resulting exception, and the catch-resume
+// path used to come back with most nonvolatile registers zeroed (see the
+// nonvolatile preservation in exceptionhandling.cpp).
+extern "C" void* OpenMutexW(uint32_t /*dwDesiredAccess*/, int /*bInheritHandle*/,
+                             const wchar_t* /*lpName*/) {
+    TRACE_REAL(OpenMutexW);
+    uint32_t err = 0;
+    uint64_t h = SharpOSHost_OpenMutex(&err);
+    g_LastError = err;
+    return (void*)(uintptr_t)h;
+}
+CRT_REAL(OpenMutexW);
+
+extern "C" void* OpenMutexA(uint32_t dwDesiredAccess, int bInheritHandle,
+                             const char* /*lpName*/) {
+    TRACE_REAL(OpenMutexA);
+    return OpenMutexW(dwDesiredAccess, bInheritHandle, nullptr);
+}
+CRT_REAL(OpenMutexA);
 
 extern "C" void* CreateMutexExW(void* /*lpAttrs*/, const wchar_t* /*lpName*/, uint32_t dwFlags, uint32_t /*dwDesiredAccess*/) {
     TRACE_REAL(CreateMutexExW);
@@ -1946,6 +1985,10 @@ CRT_REAL(FlushViewOfFile);
 // for any name → PS treats as "library has no exports" and skips network drives.
 #define SHARPOS_MPR_HMODULE       ((void*)(uintptr_t)0x05049270U)
 #define SHARPOS_IPHLPAPI_HMODULE  ((void*)(uintptr_t)0x07FE19A0U)
+// ucrtbase → sentinel; the allocator entry points Interop.Ucrtbase declares
+// (malloc/free/calloc/realloc/_aligned_*) are all in-image CRT functions.
+// Without this Process.ProcessName throws DllNotFound out of GetProcessInfos.
+#define SHARPOS_UCRTBASE_HMODULE  ((void*)(uintptr_t)0x0C271BA5U)
 
 // Case-insensitive substring search: does `s` (UTF-16) contain ASCII `needle`?
 // Used to detect API Set names like "api-ms-win-core-file-l1-1-0" anywhere
@@ -2112,6 +2155,13 @@ static int sharpos_is_iphlpapi(const wchar_t* name) {
         || sharpos_wstr_iends_with(name, "iphlpapi.dll.dll");
 }
 
+static int sharpos_is_ucrtbase(const wchar_t* name) {
+    if (name == nullptr) return 0;
+    return sharpos_wstr_iends_with(name, "ucrtbase")
+        || sharpos_wstr_iends_with(name, "ucrtbase.dll")
+        || sharpos_wstr_iends_with(name, "ucrtbase.dll.dll");
+}
+
 static int sharpos_is_syscrypto(const wchar_t* name) {
     if (name == nullptr) return 0;
     return sharpos_wstr_iends_with(name, "libsystem.security.cryptography.native.openssl")
@@ -2221,6 +2271,11 @@ extern "C" void* LoadLibraryExW(const wchar_t* lpLibFileName, void* /*hFile*/, u
         SharpOSHost_DebugPrint("[LoadLibrary iphlpapi] returning sentinel handle\n");
         g_LastError = 0;
         return SHARPOS_IPHLPAPI_HMODULE;
+    }
+    if (sharpos_is_ucrtbase(lpLibFileName)) {
+        SharpOSHost_DebugPrint("[LoadLibrary ucrtbase] returning sentinel handle\n");
+        g_LastError = 0;
+        return SHARPOS_UCRTBASE_HMODULE;
     }
     // step 99 pass 3: libSystem.Security.Cryptography.Native.OpenSsl → sentinel;
     // CryptoNative_* RNG/SHA256 are in-image.
@@ -2734,6 +2789,10 @@ CRT_REAL(FlushProcessWriteBuffers);
 // Report "leap seconds unsupported" (Enabled=0) with STATUS_SUCCESS so
 // the BCL caches that result instead of throwing. Any other class →
 // STATUS_NOT_IMPLEMENTED (callers treat non-zero as "unsupported").
+// Defined further down; the process-information class below fills the image
+// name from it so the path is spelled in exactly one place.
+extern "C" uint32_t GetModuleFileNameW(void* mod, wchar_t* buf, uint32_t size);
+
 extern "C" int NtQuerySystemInformation(int SystemInformationClass,
                                         void* SystemInformation,
                                         unsigned int SystemInformationLength,
@@ -2742,6 +2801,7 @@ extern "C" int NtQuerySystemInformation(int SystemInformationClass,
     const int  STATUS_NOT_IMPLEMENTED      = (int)0xC0000002u;
     const int  STATUS_INFO_LENGTH_MISMATCH = (int)0xC0000004u;
     const int  SystemLeapSecondInformation = 206;
+    const int  SystemProcessInformation    = 5;
     if (ReturnLength) *ReturnLength = 0;
     if (SystemInformationClass == SystemLeapSecondInformation) {
         // { unsigned char Enabled; unsigned int Flags; } — 8 bytes packed.
@@ -2750,6 +2810,41 @@ extern "C" int NtQuerySystemInformation(int SystemInformationClass,
             return STATUS_INFO_LENGTH_MISMATCH;
         ((unsigned char*)SystemInformation)[0] = 0;          // Enabled = FALSE
         *(unsigned int*)((unsigned char*)SystemInformation + 4) = 0; // Flags
+        return STATUS_SUCCESS;
+    }
+    if (SystemInformationClass == SystemProcessInformation) {
+        // Process.ProcessName walks this. Offsets mirror the managed
+        // SYSTEM_PROCESS_INFORMATION (Interop.SYSTEM_PROCESS_INFORMATION.cs);
+        // the struct is 0x100 bytes on x64 and, as on Windows, the image name
+        // characters are stored in the same buffer right behind the entry.
+        const uint32_t OFF_NEXT_ENTRY = 0x00, OFF_THREAD_COUNT = 0x04;
+        const uint32_t OFF_IMAGE_NAME = 0x38, OFF_BASE_PRIORITY = 0x48;
+        const uint32_t OFF_UNIQUE_PID = 0x50, OFF_SESSION_ID   = 0x64;
+        const uint32_t ENTRY_SIZE     = 0x100;
+
+        // One entry: this process. The name comes from GetModuleFileNameW so
+        // there is a single spelling of it; trimming path and extension is
+        // GetProcessShortName's job on the managed side.
+        uint32_t nameLen  = GetModuleFileNameW(nullptr, nullptr, 0);
+        uint32_t required = ENTRY_SIZE + (nameLen + 1) * 2;
+        if (ReturnLength) *ReturnLength = required;
+        if (!SystemInformation || SystemInformationLength < required)
+            return STATUS_INFO_LENGTH_MISMATCH;
+
+        unsigned char* base = (unsigned char*)SystemInformation;
+        for (uint32_t i = 0; i < ENTRY_SIZE; i++) base[i] = 0;
+
+        wchar_t* nameBuf = (wchar_t*)(base + ENTRY_SIZE);
+        GetModuleFileNameW(nullptr, nameBuf, nameLen + 1);
+
+        *(uint32_t*)(base + OFF_NEXT_ENTRY)    = 0;   // single entry, no chain
+        *(uint32_t*)(base + OFF_THREAD_COUNT)  = 0;   // no SYSTEM_THREAD_INFORMATION follows
+        *(uint16_t*)(base + OFF_IMAGE_NAME)    = (uint16_t)(nameLen * 2);        // Length
+        *(uint16_t*)(base + OFF_IMAGE_NAME + 2)= (uint16_t)((nameLen + 1) * 2);  // MaximumLength
+        *(void**)   (base + OFF_IMAGE_NAME + 8)= nameBuf;                        // Buffer
+        *(int32_t*) (base + OFF_BASE_PRIORITY) = 8;
+        *(uintptr_t*)(base + OFF_UNIQUE_PID)   = (uintptr_t)GetCurrentProcessId();
+        *(uint32_t*)(base + OFF_SESSION_ID)    = 0;
         return STATUS_SUCCESS;
     }
     return STATUS_NOT_IMPLEMENTED;
@@ -4227,6 +4322,23 @@ CRT_REAL(GetCommandLineW);
 extern "C" uint32_t GetConsoleOutputCP(void) { TRACE_REAL(GetConsoleOutputCP); return 437; }
 CRT_REAL(GetConsoleOutputCP);
 
+// SetConsoleOutputCP / SetConsoleCP — the terminal engine decodes UTF-8 and the
+// serial log is bytes either way, so the requested code page changes nothing.
+// Report success: a failure here makes PowerShell think the console is broken.
+extern "C" int SetConsoleOutputCP(uint32_t /*wCodePageID*/) {
+    TRACE_REAL(SetConsoleOutputCP);
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SetConsoleOutputCP);
+
+extern "C" int SetConsoleCP(uint32_t /*wCodePageID*/) {
+    TRACE_REAL(SetConsoleCP);
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(SetConsoleCP);
+
 // Codepage queries used by BCL Encoding.OEM / Encoding.ASCII fallback paths.
 // PS Get-Content goes through Encoding detection on file read → these must
 // resolve or PS throws EntryPointNotFoundException at the read site.
@@ -4601,20 +4713,23 @@ extern "C" int SaferCloseLevel(void* /*hLevelHandle*/) {
 }
 CRT_REAL(SaferCloseLevel);
 
-// SaferComputeTokenFromLevel — given a SAFER level handle, build a restricted
-// access token. PS uses this to verify trust at command import. We don't
-// have a real token system; hand back a sentinel that PS Safer-Module path
-// treats as success → cmdlet loads.
-#define SHARPOS_SAFER_TOKEN_SENTINEL  ((void*)(uintptr_t)0x5AFE12C00DE5BEEFULL)
+// SaferComputeTokenFromLevel — given a SAFER level handle, build the restricted
+// access token the code must run under. The verdict travels in the OUT token,
+// not the return value: NULL means "no restriction applies". Handing back a
+// non-null sentinel told PowerShell the opposite — that a restricted token was
+// required — and it refused to load PSReadLine's format file with "blocked by
+// software restriction policies". Kernel policy lives in
+// OS/src/PAL/SharpOSHost/SaferPolicy.cs.
+extern "C" int SharpOSHost_SaferComputeTokenFromLevel(void** outAccessToken);
 extern "C" int SaferComputeTokenFromLevel(void* /*LevelHandle*/,
                                            void* /*InAccessToken*/,
                                            void** OutAccessToken,
                                            uint32_t /*dwFlags*/,
                                            void* /*lpReserved*/) {
     TRACE_REAL(SaferComputeTokenFromLevel);
-    if (OutAccessToken) *OutAccessToken = SHARPOS_SAFER_TOKEN_SENTINEL;
+    int ok = SharpOSHost_SaferComputeTokenFromLevel(OutAccessToken);
     g_LastError = 0;
-    return 1;
+    return ok;
 }
 CRT_REAL(SaferComputeTokenFromLevel);
 
@@ -4909,6 +5024,42 @@ extern "C" long WinVerifyTrust(void* /*hwnd*/, void* /*pgActionID*/, void* /*pWV
 }
 CRT_REAL(WinVerifyTrust);
 
+// wintrust helpers. PowerShell asks for the provider data behind a state
+// handle after WinVerifyTrust answers, to describe the signer. Kernel policy
+// (OS/src/PAL/SharpOSHost/AuthenticodePolicy.cs) has nothing to describe: no
+// verification ran, so there is no provider data, signer or certificate.
+// These exist because the P/Invoke has to *resolve* — importing PSReadLine
+// failed at entry-point lookup, before any call.
+extern "C" void* SharpOSHost_WTHelperProvDataFromStateData(void* hStateData);
+extern "C" void* SharpOSHost_WTHelperGetProvSignerFromChain(void* provData,
+                                                            unsigned int idxSigner,
+                                                            int fCounterSigner,
+                                                            unsigned int idxCounterSigner);
+extern "C" void* SharpOSHost_WTHelperGetProvCertFromChain(void* signer,
+                                                          unsigned int idxCert);
+
+extern "C" void* WTHelperProvDataFromStateData(void* hStateData) {
+    TRACE_REAL(WTHelperProvDataFromStateData);
+    return SharpOSHost_WTHelperProvDataFromStateData(hStateData);
+}
+CRT_REAL(WTHelperProvDataFromStateData);
+
+extern "C" void* WTHelperGetProvSignerFromChain(void* provData,
+                                                unsigned int idxSigner,
+                                                int fCounterSigner,
+                                                unsigned int idxCounterSigner) {
+    TRACE_REAL(WTHelperGetProvSignerFromChain);
+    return SharpOSHost_WTHelperGetProvSignerFromChain(provData, idxSigner,
+                                                      fCounterSigner, idxCounterSigner);
+}
+CRT_REAL(WTHelperGetProvSignerFromChain);
+
+extern "C" void* WTHelperGetProvCertFromChain(void* signer, unsigned int idxCert) {
+    TRACE_REAL(WTHelperGetProvCertFromChain);
+    return SharpOSHost_WTHelperGetProvCertFromChain(signer, idxCert);
+}
+CRT_REAL(WTHelperGetProvCertFromChain);
+
 // UINT GetDriveTypeW(LPCWSTR lpRootPathName) — extract drive letter, delegate.
 extern "C" unsigned int GetDriveTypeW(const wchar_t* lpRootPathName) {
     TRACE_REAL(GetDriveTypeW);
@@ -4972,6 +5123,17 @@ extern "C" void* GetConsoleWindow(void) {
     return SharpOSHost_GetConsoleWindow();
 }
 CRT_REAL(GetConsoleWindow);
+
+// EnumWindows — Process.MainWindowHandle walks every top-level window. There
+// are none here, so report a successful enumeration of zero windows without
+// ever invoking the callback: MainWindowHandle stays IntPtr.Zero and
+// MainWindowTitle comes back empty, which is what a windowless host means.
+extern "C" int EnumWindows(void* /*lpEnumFunc*/, intptr_t /*lParam*/) {
+    TRACE_REAL(EnumWindows);
+    g_LastError = 0;
+    return 1;
+}
+CRT_REAL(EnumWindows);
 
 // step126.13: kernel32 OpenProcess + GetCPInfoEx + advapi32 LookupAccountName.
 // Kernel policy in ProcessAndCodepage.cs.
@@ -5244,6 +5406,43 @@ extern "C" int GetConsoleScreenBufferInfo(void* hConsole, void* lpConsoleScreenB
 }
 CRT_REAL(GetConsoleScreenBufferInfo);
 
+// GetConsoleCursorInfo / SetConsoleCursorInfo — PSReadLine reads the cursor
+// shape on entry and hides the cursor around repaints. Kernel policy in
+// ConsoleWin32.cs.
+extern "C" int SharpOSHost_GetConsoleCursorInfo(uint64_t hConsole, void* lpConsoleCursorInfo);
+extern "C" int SharpOSHost_SetConsoleCursorInfo(uint64_t hConsole, void* lpConsoleCursorInfo);
+
+extern "C" int GetConsoleCursorInfo(void* hConsole, void* lpConsoleCursorInfo) {
+    TRACE_REAL(GetConsoleCursorInfo);
+    int ok = SharpOSHost_GetConsoleCursorInfo((uint64_t)(uintptr_t)hConsole, lpConsoleCursorInfo);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(GetConsoleCursorInfo);
+
+extern "C" int SetConsoleCursorInfo(void* hConsole, void* lpConsoleCursorInfo) {
+    TRACE_REAL(SetConsoleCursorInfo);
+    int ok = SharpOSHost_SetConsoleCursorInfo((uint64_t)(uintptr_t)hConsole, lpConsoleCursorInfo);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(SetConsoleCursorInfo);
+
+// GetCurrentConsoleFontEx — PSReadLine queries the console font before drawing.
+// Kernel policy in ConsoleWin32.cs; the struct is bounded by its own cbSize.
+extern "C" int SharpOSHost_GetCurrentConsoleFontEx(uint64_t hConsole, int bMaximumWindow,
+                                                   void* lpConsoleCurrentFontEx);
+
+extern "C" int GetCurrentConsoleFontEx(void* hConsole, int bMaximumWindow,
+                                       void* lpConsoleCurrentFontEx) {
+    TRACE_REAL(GetCurrentConsoleFontEx);
+    int ok = SharpOSHost_GetCurrentConsoleFontEx((uint64_t)(uintptr_t)hConsole,
+                                                 bMaximumWindow, lpConsoleCurrentFontEx);
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(GetCurrentConsoleFontEx);
+
 extern "C" int SetConsoleCursorPosition(void* hConsole, int packedCoord) {
     TRACE_REAL(SetConsoleCursorPosition);
     int ok = SharpOSHost_SetConsoleCursorPosition((uint64_t)(uintptr_t)hConsole, packedCoord);
@@ -5309,6 +5508,56 @@ extern "C" int ReadConsoleW(void* /*hConsoleInput*/,
     return ok;
 }
 CRT_REAL(ReadConsoleW);
+
+// Console *event* input. ReadConsoleW hands back a finished line (kernel-side
+// LineEditor owns the editing); PSReadLine does its own editing and needs raw
+// key events instead — virtual key codes plus modifier state. Kernel policy in
+// OS/src/PAL/SharpOSHost/ConsoleInput.cs; INPUT_RECORD is written there.
+extern "C" int SharpOSHost_ReadConsoleInput(void* buffer, unsigned int length,
+                                            unsigned int* eventsRead);
+extern "C" int SharpOSHost_PeekConsoleInput(void* buffer, unsigned int length,
+                                            unsigned int* eventsRead);
+extern "C" int SharpOSHost_GetNumberOfConsoleInputEvents(unsigned int* count);
+
+extern "C" int ReadConsoleInputW(void* /*hConsoleInput*/, void* lpBuffer,
+                                  unsigned long nLength, unsigned long* lpNumberOfEventsRead) {
+    TRACE_REAL(ReadConsoleInputW);
+    unsigned int read = 0;
+    int ok = SharpOSHost_ReadConsoleInput(lpBuffer, (unsigned int)nLength, &read);
+    if (lpNumberOfEventsRead != nullptr) *lpNumberOfEventsRead = (unsigned long)read;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(ReadConsoleInputW);
+
+extern "C" int ReadConsoleInputA(void* hConsoleInput, void* lpBuffer,
+                                  unsigned long nLength, unsigned long* lpNumberOfEventsRead) {
+    TRACE_REAL(ReadConsoleInputA);
+    return ReadConsoleInputW(hConsoleInput, lpBuffer, nLength, lpNumberOfEventsRead);
+}
+CRT_REAL(ReadConsoleInputA);
+
+extern "C" int PeekConsoleInputW(void* /*hConsoleInput*/, void* lpBuffer,
+                                  unsigned long nLength, unsigned long* lpNumberOfEventsRead) {
+    TRACE_REAL(PeekConsoleInputW);
+    unsigned int read = 0;
+    int ok = SharpOSHost_PeekConsoleInput(lpBuffer, (unsigned int)nLength, &read);
+    if (lpNumberOfEventsRead != nullptr) *lpNumberOfEventsRead = (unsigned long)read;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(PeekConsoleInputW);
+
+extern "C" int GetNumberOfConsoleInputEvents(void* /*hConsoleInput*/,
+                                              unsigned long* lpcNumberOfEvents) {
+    TRACE_REAL(GetNumberOfConsoleInputEvents);
+    unsigned int count = 0;
+    int ok = SharpOSHost_GetNumberOfConsoleInputEvents(&count);
+    if (lpcNumberOfEvents != nullptr) *lpcNumberOfEvents = (unsigned long)count;
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(GetNumberOfConsoleInputEvents);
 
 extern "C" int ReadConsoleA(void* /*hConsoleInput*/,
                              void* lpBuffer,
@@ -5800,9 +6049,23 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
     if (mod == SHARPOS_WINTRUST_HMODULE && name != nullptr) {
         // WinVerifyTrust: PS SystemPolicy probes Authenticode signature on
         // pwsh.dll to decide CLM. Return 0 = ERROR_SUCCESS = trusted.
-        if (sharpos_streq(name, "WinVerifyTrust")) {
+        // The W spellings are probed too; wintrust has no separate A/W bodies.
+        if (sharpos_streq(name, "WinVerifyTrust") || sharpos_streq(name, "WinVerifyTrustW")) {
             g_LastError = 0;
             return (void*)&WinVerifyTrust;
+        }
+        if (sharpos_streq(name, "WTHelperProvDataFromStateData")
+            || sharpos_streq(name, "WTHelperProvDataFromStateDataW")) {
+            g_LastError = 0;
+            return (void*)&WTHelperProvDataFromStateData;
+        }
+        if (sharpos_streq(name, "WTHelperGetProvSignerFromChain")) {
+            g_LastError = 0;
+            return (void*)&WTHelperGetProvSignerFromChain;
+        }
+        if (sharpos_streq(name, "WTHelperGetProvCertFromChain")) {
+            g_LastError = 0;
+            return (void*)&WTHelperGetProvCertFromChain;
         }
         SharpOSHost_DebugPrintForced("[GetProcAddress wintrust] unknown name=");
         SharpOSHost_DebugPrintForced(name);
@@ -5823,6 +6086,20 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         g_LastError = 127;
         return nullptr;
     }
+    if (mod == SHARPOS_UCRTBASE_HMODULE && name != nullptr) {
+        // Interop.Ucrtbase declares the CRT allocators; ours route to the
+        // kernel heap. P/Invoke resolves lazily, so a name that is never
+        // called never gets here — an unknown one is printed, not guessed at.
+        if (sharpos_streq(name, "malloc"))  { g_LastError = 0; return (void*)&malloc; }
+        if (sharpos_streq(name, "free"))    { g_LastError = 0; return (void*)&free; }
+        if (sharpos_streq(name, "calloc"))  { g_LastError = 0; return (void*)&calloc; }
+        if (sharpos_streq(name, "realloc")) { g_LastError = 0; return (void*)&realloc; }
+        SharpOSHost_DebugPrintForced("[GetProcAddress ucrtbase] unknown name=");
+        SharpOSHost_DebugPrintForced(name);
+        SharpOSHost_DebugPrintForced("\n");
+        g_LastError = 127;
+        return nullptr;
+    }
     if (mod == SHARPOS_USER32_HMODULE && name != nullptr) {
         // step126.11: user32 — system-wide UI/accessibility queries.
         if (sharpos_streq(name, "SystemParametersInfoW")) { g_LastError = 0; return (void*)&SystemParametersInfoW; }
@@ -5830,6 +6107,7 @@ extern "C" void* GetProcAddress(void* mod, const char* name) {
         if (sharpos_streq(name, "SystemParametersInfo"))  { g_LastError = 0; return (void*)&SystemParametersInfoW; }
         if (sharpos_streq(name, "GetSystemMetrics"))      { g_LastError = 0; return (void*)&GetSystemMetrics; }
         if (sharpos_streq(name, "GetConsoleWindow"))      { g_LastError = 0; return (void*)&GetConsoleWindow; }
+        if (sharpos_streq(name, "EnumWindows"))           { g_LastError = 0; return (void*)&EnumWindows; }
         SharpOSHost_DebugPrintForced("[GetProcAddress user32] unknown name=");
         SharpOSHost_DebugPrintForced(name);
         SharpOSHost_DebugPrintForced("\n");
@@ -6238,6 +6516,8 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"CreateSemaphoreW"))             return (void*)&CreateSemaphoreW;
     if (sharpos_streq(n,"CreateSemaphoreExW"))           return (void*)&CreateSemaphoreExW;
     if (sharpos_streq(n,"CreateMutexW"))                 return (void*)&CreateMutexW;
+    if (sharpos_streq(n,"OpenMutexW"))                   return (void*)&OpenMutexW;
+    if (sharpos_streq(n,"OpenMutexA"))                   return (void*)&OpenMutexA;
     if (sharpos_streq(n,"CreateMutexExW"))               return (void*)&CreateMutexExW;
     if (sharpos_streq(n,"SetEvent"))                     return (void*)&SetEvent;
     if (sharpos_streq(n,"ResetEvent"))                   return (void*)&ResetEvent;
@@ -6328,6 +6608,9 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"RegFlushKey"))                  return (void*)&RegFlushKey;
     // step126: kernel32 Console facade
     if (sharpos_streq(n,"GetStdHandle"))                 return (void*)&GetStdHandle;
+    if (sharpos_streq(n,"GetStdHandleW"))                return (void*)&GetStdHandle;
+    if (sharpos_streq(n,"SetConsoleOutputCP"))           return (void*)&SetConsoleOutputCP;
+    if (sharpos_streq(n,"SetConsoleCP"))                 return (void*)&SetConsoleCP;
     if (sharpos_streq(n,"WriteConsoleW"))                return (void*)&WriteConsoleW;
     if (sharpos_streq(n,"WriteFile"))                    return (void*)&WriteFile;
     if (sharpos_streq(n,"GetConsoleMode"))               return (void*)&GetConsoleMode;
@@ -6340,6 +6623,11 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     // (Some PowerShell binaries import these with the W suffix even though
     // the function takes only HANDLE; we just map both to the same shim.)
     if (sharpos_streq(n,"GetConsoleModeW"))              return (void*)&GetConsoleMode;
+    if (sharpos_streq(n,"SetConsoleModeW"))              return (void*)&SetConsoleMode;
+    if (sharpos_streq(n,"GetCurrentConsoleFontEx"))      return (void*)&GetCurrentConsoleFontEx;
+    if (sharpos_streq(n,"GetConsoleCursorInfo"))         return (void*)&GetConsoleCursorInfo;
+    if (sharpos_streq(n,"SetConsoleCursorInfo"))         return (void*)&SetConsoleCursorInfo;
+    if (sharpos_streq(n,"GetCurrentConsoleFontExW"))     return (void*)&GetCurrentConsoleFontEx;
     if (sharpos_streq(n,"GetConsoleScreenBufferInfoW"))  return (void*)&GetConsoleScreenBufferInfo;
     if (sharpos_streq(n,"SetConsoleCtrlHandler"))        return (void*)&SetConsoleCtrlHandler;
     if (sharpos_streq(n,"SetConsoleCtrlHandlerW"))       return (void*)&SetConsoleCtrlHandler;
@@ -6352,6 +6640,18 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"ReadConsole"))                  return (void*)&ReadConsoleW;
     if (sharpos_streq(n,"ReadConsoleW"))                 return (void*)&ReadConsoleW;
     if (sharpos_streq(n,"ReadConsoleA"))                 return (void*)&ReadConsoleA;
+    // Console event input — PSReadLine does its own line editing and reads key
+    // events rather than lines. Kernel policy in ConsoleInput.cs.
+    if (sharpos_streq(n,"ReadConsoleInput"))             return (void*)&ReadConsoleInputW;
+    if (sharpos_streq(n,"ReadConsoleInputW"))            return (void*)&ReadConsoleInputW;
+    if (sharpos_streq(n,"ReadConsoleInputA"))            return (void*)&ReadConsoleInputA;
+    if (sharpos_streq(n,"PeekConsoleInput"))             return (void*)&PeekConsoleInputW;
+    if (sharpos_streq(n,"PeekConsoleInputW"))            return (void*)&PeekConsoleInputW;
+    if (sharpos_streq(n,"GetNumberOfConsoleInputEvents")) return (void*)&GetNumberOfConsoleInputEvents;
+    // GetConsoleWindow lives in kernel32 on Windows; it was only reachable
+    // through the user32 sentinel, so PSReadLine's P/Invoke could not resolve it
+    // and its whole initialization died on the entry-point lookup.
+    if (sharpos_streq(n,"GetConsoleWindow"))             return (void*)&GetConsoleWindow;
     // step126.5: directory ops + env
     if (sharpos_streq(n,"CreateDirectoryW"))             return (void*)&CreateDirectoryW;
     if (sharpos_streq(n,"RemoveDirectoryW"))             return (void*)&RemoveDirectoryW;

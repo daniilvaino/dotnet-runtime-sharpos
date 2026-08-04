@@ -45,6 +45,75 @@
 #endif // FEATURE_GDBJIT
 
 #if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
+
+// Transition-block probes from the CallDescr RBX-clobber hunt. Off by default;
+// the older SharpOS_DumpPrestubMethod below is outside this gate because
+// pre-existing call sites depend on it.
+#if defined(SHARPOS_CALLDESCR_DIAG)
+static void SharpOS_PSW_Write(const char* s)
+{
+    int n = 0;
+    while (s[n] != 0) n++;
+    SharpOSHost_DebugWrite((const uint8_t*)s, n);
+}
+
+static void SharpOS_PSW_Hex(uint64_t value)
+{
+    char buf[18];
+    buf[0] = '0';
+    buf[1] = 'x';
+    for (int i = 0; i < 16; i++)
+    {
+        unsigned shift = (unsigned)((15 - i) * 4);
+        unsigned nibble = (unsigned)((value >> shift) & 0xF);
+        buf[2 + i] = (char)(nibble < 10 ? ('0' + nibble) : ('A' + (nibble - 10)));
+    }
+    SharpOSHost_DebugWrite((const uint8_t*)buf, 18);
+}
+
+#if defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI)
+static void SharpOS_PSW_DumpTBSaved(const char* tag, TransitionBlock* pTransitionBlock)
+{
+    SharpOS_PSW_Write(tag);
+    SharpOS_PSW_Write(" tb=");
+    SharpOS_PSW_Hex((uint64_t)(uintptr_t)pTransitionBlock);
+
+    if (pTransitionBlock == NULL)
+    {
+        SharpOS_PSW_Write(" null\n");
+        return;
+    }
+
+    CalleeSavedRegisters* regs = &pTransitionBlock->m_calleeSavedRegisters;
+    SharpOS_PSW_Write(" ra=");
+    SharpOS_PSW_Hex((uint64_t)pTransitionBlock->m_ReturnAddress);
+    SharpOS_PSW_Write(" rdi=");
+    SharpOS_PSW_Hex((uint64_t)regs->Rdi);
+    SharpOS_PSW_Write(" rsi=");
+    SharpOS_PSW_Hex((uint64_t)regs->Rsi);
+    SharpOS_PSW_Write(" rbx=");
+    SharpOS_PSW_Hex((uint64_t)regs->Rbx);
+    SharpOS_PSW_Write(" rbp=");
+    SharpOS_PSW_Hex((uint64_t)regs->Rbp);
+    SharpOS_PSW_Write(" r12=");
+    SharpOS_PSW_Hex((uint64_t)regs->R12);
+    SharpOS_PSW_Write(" r13=");
+    SharpOS_PSW_Hex((uint64_t)regs->R13);
+    SharpOS_PSW_Write(" r14=");
+    SharpOS_PSW_Hex((uint64_t)regs->R14);
+    SharpOS_PSW_Write(" r15=");
+    SharpOS_PSW_Hex((uint64_t)regs->R15);
+    SharpOS_PSW_Write("\n");
+}
+
+static bool SharpOS_PSW_IsJitLikeAddress(uint64_t value)
+{
+    return value >= 0x0000500000000000ULL && value < 0x0000600000000000ULL;
+}
+#endif
+#endif // SHARPOS_CALLDESCR_DIAG
+
 static void SharpOS_DumpPrestubMethod(const char* tag, MethodDesc* pMD, PCODE code = (PCODE)NULL)
 {
     SharpOSHost_DebugPrint(tag);
@@ -2036,6 +2105,22 @@ extern "C" PCODE STDCALL PreStubWorker(TransitionBlock* pTransitionBlock, Method
 
     MAKE_CURRENT_THREAD_AVAILABLE_EX(GetThreadNULLOk());
 
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    bool sharpOSFromCallDescr = IsCallDescrWorkerInternalReturnAddress(pTransitionBlock->m_ReturnAddress);
+    uint64_t sharpOSRdi0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rdi;
+    uint64_t sharpOSRsi0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rsi;
+    uint64_t sharpOSRbx0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbx;
+    uint64_t sharpOSRbp0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbp;
+    uint64_t sharpOSR120 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R12;
+    uint64_t sharpOSR130 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R13;
+    uint64_t sharpOSR140 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R14;
+    uint64_t sharpOSR150 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R15;
+    if (sharpOSFromCallDescr)
+    {
+        SharpOS_PSW_DumpTBSaved("[PSW-TB-entry]", pTransitionBlock);
+    }
+#endif
+
     // Attempt to check what GC mode we are running under.
     if (CURRENT_THREAD == NULL
         || !CURRENT_THREAD->PreemptiveGCDisabled())
@@ -2147,6 +2232,25 @@ extern "C" PCODE STDCALL PreStubWorker(TransitionBlock* pTransitionBlock, Method
         SharpOSHost_DebugPrint("[PSW] post-pPFrame->Pop, returning\n");
 #endif
     }
+
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    bool sharpOSTBChanged =
+        sharpOSRdi0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rdi ||
+        sharpOSRsi0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rsi ||
+        sharpOSRbx0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbx ||
+        sharpOSRbp0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbp ||
+        sharpOSR120 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R12 ||
+        sharpOSR130 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R13 ||
+        sharpOSR140 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R14 ||
+        sharpOSR150 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R15;
+    if (sharpOSFromCallDescr || sharpOSTBChanged)
+    {
+        SharpOS_PSW_DumpTBSaved(sharpOSTBChanged ? "[PSW-TB-changed]" : "[PSW-TB-exit]", pTransitionBlock);
+        SharpOS_PSW_Write("[PSW-TB-target] code=");
+        SharpOS_PSW_Hex((uint64_t)pbRetVal);
+        SharpOS_PSW_Write("\n");
+    }
+#endif
 
     POSTCONDITION(pbRetVal != NULL);
 
@@ -2686,6 +2790,24 @@ EXTERN_C PCODE STDCALL ExternalMethodFixupWorker(TransitionBlock * pTransitionBl
 
     MAKE_CURRENT_THREAD_AVAILABLE();
 
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    uint64_t sharpOSEmfRet0 = (uint64_t)pTransitionBlock->m_ReturnAddress;
+    uint64_t sharpOSEmfRdi0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rdi;
+    uint64_t sharpOSEmfRsi0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rsi;
+    uint64_t sharpOSEmfRbx0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbx;
+    uint64_t sharpOSEmfRbp0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbp;
+    uint64_t sharpOSEmfR120 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R12;
+    uint64_t sharpOSEmfR130 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R13;
+    uint64_t sharpOSEmfR140 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R14;
+    uint64_t sharpOSEmfR150 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R15;
+    bool sharpOSEmfManagedCaller = SharpOS_PSW_IsJitLikeAddress(sharpOSEmfRet0);
+    bool sharpOSEmfFirst3Zero =
+        sharpOSEmfRdi0 == 0 ||
+        sharpOSEmfRsi0 == 0 ||
+        sharpOSEmfRbx0 == 0;
+    uint64_t sharpOSEmfMDForLog = 0;
+#endif
+
 #ifdef _DEBUG
     Thread::ObjectRefFlush(CURRENT_THREAD);
 #endif
@@ -2704,6 +2826,20 @@ EXTERN_C PCODE STDCALL ExternalMethodFixupWorker(TransitionBlock * pTransitionBl
 #else
         pIndirection = *(((INT32 *)retAddr) - 1) + retAddr;
 #endif
+    }
+#endif
+
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    if (sharpOSEmfManagedCaller || sharpOSEmfFirst3Zero)
+    {
+        SharpOS_PSW_DumpTBSaved("[EMF-TB-entry]", pTransitionBlock);
+        SharpOS_PSW_Write("[EMF-site-entry] ind=");
+        SharpOS_PSW_Hex((uint64_t)(uintptr_t)pIndirection);
+        SharpOS_PSW_Write(" section=");
+        SharpOS_PSW_Hex((uint64_t)sectionIndex);
+        SharpOS_PSW_Write(" module=");
+        SharpOS_PSW_Hex((uint64_t)(uintptr_t)pModule);
+        SharpOS_PSW_Write("\n");
     }
 #endif
 
@@ -3000,10 +3136,51 @@ EXTERN_C PCODE STDCALL ExternalMethodFixupWorker(TransitionBlock * pTransitionBl
     }
     // Ready to return
 
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    sharpOSEmfMDForLog = (uint64_t)(uintptr_t)pMD;
+#endif
+
     UNINSTALL_UNWIND_AND_CONTINUE_HANDLER_EX(propagateExceptionToNativeCode);
     UNINSTALL_MANAGED_EXCEPTION_DISPATCHER_EX(propagateExceptionToNativeCode);
 
     pEMFrame->Pop(CURRENT_THREAD);          // Pop the ExternalMethodFrame from the frame stack
+
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    bool sharpOSEmfTBChanged =
+        sharpOSEmfRdi0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rdi ||
+        sharpOSEmfRsi0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rsi ||
+        sharpOSEmfRbx0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbx ||
+        sharpOSEmfRbp0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbp ||
+        sharpOSEmfR120 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R12 ||
+        sharpOSEmfR130 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R13 ||
+        sharpOSEmfR140 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R14 ||
+        sharpOSEmfR150 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R15;
+    bool sharpOSEmfFirst3ZeroEnd =
+        pTransitionBlock->m_calleeSavedRegisters.Rdi == 0 ||
+        pTransitionBlock->m_calleeSavedRegisters.Rsi == 0 ||
+        pTransitionBlock->m_calleeSavedRegisters.Rbx == 0;
+    if (sharpOSEmfManagedCaller || sharpOSEmfFirst3Zero || sharpOSEmfFirst3ZeroEnd || sharpOSEmfTBChanged)
+    {
+        SharpOS_PSW_DumpTBSaved(sharpOSEmfTBChanged ? "[EMF-TB-changed]" : "[EMF-TB-exit]", pTransitionBlock);
+        SharpOS_PSW_Write("[EMF-site] ind=");
+        SharpOS_PSW_Hex((uint64_t)(uintptr_t)pIndirection);
+        SharpOS_PSW_Write(" section=");
+        SharpOS_PSW_Hex((uint64_t)sectionIndex);
+        SharpOS_PSW_Write(" module=");
+        SharpOS_PSW_Hex((uint64_t)(uintptr_t)pModule);
+        SharpOS_PSW_Write(" code=");
+        SharpOS_PSW_Hex((uint64_t)pCode);
+        SharpOS_PSW_Write(" md=");
+        SharpOS_PSW_Hex(sharpOSEmfMDForLog);
+        SharpOS_PSW_Write(" oldrdi=");
+        SharpOS_PSW_Hex(sharpOSEmfRdi0);
+        SharpOS_PSW_Write(" oldrsi=");
+        SharpOS_PSW_Hex(sharpOSEmfRsi0);
+        SharpOS_PSW_Write(" oldrbx=");
+        SharpOS_PSW_Hex(sharpOSEmfRbx0);
+        SharpOS_PSW_Write("\n");
+    }
+#endif
 
     return pCode;
 }
@@ -3669,6 +3846,17 @@ extern "C" SIZE_T STDCALL DynamicHelperWorker(TransitionBlock * pTransitionBlock
 
     MAKE_CURRENT_THREAD_AVAILABLE();
 
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    uint64_t sharpOSDhwRdi0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rdi;
+    uint64_t sharpOSDhwRsi0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rsi;
+    uint64_t sharpOSDhwRbx0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbx;
+    uint64_t sharpOSDhwRbp0 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbp;
+    uint64_t sharpOSDhwR120 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R12;
+    uint64_t sharpOSDhwR130 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R13;
+    uint64_t sharpOSDhwR140 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R14;
+    uint64_t sharpOSDhwR150 = (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R15;
+#endif
+
 #ifdef _DEBUG
     Thread::ObjectRefFlush(CURRENT_THREAD);
 #endif
@@ -3707,7 +3895,7 @@ extern "C" SIZE_T STDCALL DynamicHelperWorker(TransitionBlock * pTransitionBlock
         pHelper = DynamicHelperFixup(pTransitionBlock, pCell, sectionIndex, pModule, &kind, &th, &pMD, &pFD);
     }
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
     SharpOSHost_DebugPrint("[DHW] cell=0x");
     SharpOSHost_DebugPrintHex((uint64_t)(void*)pCell);
     SharpOSHost_DebugPrint(" section=0x");
@@ -3795,12 +3983,35 @@ extern "C" SIZE_T STDCALL DynamicHelperWorker(TransitionBlock * pTransitionBlock
     if (pHelper == (PCODE)NULL)
         *(SIZE_T *)((TADDR)pTransitionBlock + TransitionBlock::GetOffsetOfArgumentRegisters()) = result;
 
-#if defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && !defined(DACCESS_COMPILE)
     SharpOSHost_DebugPrint("[DHW] return pHelper=0x");
     SharpOSHost_DebugPrintHex((uint64_t)pHelper);
     SharpOSHost_DebugPrint(" result=0x");
     SharpOSHost_DebugPrintHex((uint64_t)result);
     SharpOSHost_DebugPrint("\n");
+#endif
+
+#if defined(SHARPOS_CALLDESCR_DIAG) && defined(TARGET_SHARPOS) && defined(TARGET_AMD64) && !defined(UNIX_AMD64_ABI) && !defined(DACCESS_COMPILE)
+    bool sharpOSDhwTBChanged =
+        sharpOSDhwRdi0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rdi ||
+        sharpOSDhwRsi0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rsi ||
+        sharpOSDhwRbx0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbx ||
+        sharpOSDhwRbp0 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.Rbp ||
+        sharpOSDhwR120 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R12 ||
+        sharpOSDhwR130 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R13 ||
+        sharpOSDhwR140 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R14 ||
+        sharpOSDhwR150 != (uint64_t)pTransitionBlock->m_calleeSavedRegisters.R15;
+    if (sharpOSDhwTBChanged)
+    {
+        SharpOS_PSW_DumpTBSaved("[DHW-TB-changed]", pTransitionBlock);
+        SharpOS_PSW_Write("[DHW-TB-site] cell=");
+        SharpOS_PSW_Hex((uint64_t)(uintptr_t)pCell);
+        SharpOS_PSW_Write(" helper=");
+        SharpOS_PSW_Hex((uint64_t)pHelper);
+        SharpOS_PSW_Write(" result=");
+        SharpOS_PSW_Hex((uint64_t)result);
+        SharpOS_PSW_Write("\n");
+    }
 #endif
 
     return pHelper;
