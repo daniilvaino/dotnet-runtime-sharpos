@@ -20,6 +20,23 @@
 #include "exinfo.h"
 #endif
 
+#ifdef TARGET_SHARPOS
+// Declared here rather than taken from pal.h: this port builds against the
+// Windows-flavoured headers, where these two PAL entry points are not visible.
+// The implementations are thin forwarders in pal/sharpos/crt_imp_stubs.cpp,
+// and the actual work — deciding when a thread may be interrupted and
+// delivering the activation on the timer tick — lives in the kernel
+// (OS/src/PAL/SharpOSHost/ThreadActivation.cs).
+//
+// File scope on purpose: extern "C" inside a function body is not legal here
+// and has broken this build before.
+// Signatures spelled out rather than via the PAL_* typedefs: those live in
+// pal.h too.
+extern "C" void PAL_SetActivationFunction(void (*pActivationFunction)(CONTEXT*),
+                                          BOOL (*pSafeActivationCheckFunction)(SIZE_T));
+extern "C" BOOL PAL_InjectActivation(HANDLE hThread);
+#endif // TARGET_SHARPOS
+
 #define HIJACK_NONINTERRUPTIBLE_THREADS
 
 bool ThreadSuspend::s_fSuspendRuntimeInProgress = false;
@@ -4909,6 +4926,22 @@ void STDCALL OnHijackWorker(HijackArgs * pArgs)
 
 static bool GetReturnAddressHijackInfo(EECodeInfo *pCodeInfo X86_ARG(ReturnKind * returnKind) X86_ARG(bool* hasAsyncRet))
 {
+#ifdef TARGET_SHARPOS
+    // SharpOS: return-address hijacking disabled, deliberately and narrowly.
+    //
+    // Under preemption a thread would return to the value its own method had
+    // just produced: a probe emitting the tagged constant 0x5EEDxxxx faulted
+    // with RIP == that constant, which is the hijack stub restoring the wrong
+    // slot — the saved return value where the saved return address belongs.
+    // Suppressed here, at the single decision point, rather than by unsetting
+    // FEATURE_HIJACK: everything else the feature gates (HandledJITCase,
+    // redirectable-context checks) stays as it is.
+    //
+    // Cost: the collector loses one way to stop a thread that is running
+    // managed code, and falls back to safe points and activation. Slower
+    // suspension, correct execution.
+    return false;
+#else
     X86_ONLY(*hasAsyncRet = false);
     GCInfoToken gcInfoToken = pCodeInfo->GetGCInfoToken();
     if (!pCodeInfo->GetCodeManager()->GetReturnAddressHijackInfo(gcInfoToken X86_ARG(returnKind)))
@@ -4918,6 +4951,7 @@ static bool GetReturnAddressHijackInfo(EECodeInfo *pCodeInfo X86_ARG(ReturnKind 
     X86_ONLY(*hasAsyncRet = pMD->IsAsyncMethod());
 
     return true;
+#endif
 }
 
 // SharpOS port: открываем Windows-side hijack/HandledJITCase block (TARGET_UNIX
@@ -5975,8 +6009,30 @@ bool Thread::InjectActivation(ActivationReason reason)
 
     return false;
 #elif defined(TARGET_SHARPOS)
-    // SharpOS port: thread activation injection — Phase 6.2 task (own IPI/APC mechanism).
-    return false;
+    // SharpOS port: activation is delivered by the kernel's own timer
+    // interrupt. The tick handler already runs on the interrupted thread's
+    // stack with a full register frame, which is exactly what a signal gives
+    // on Unix; the kernel asks CheckActivationSafePoint before delivering.
+    //
+    // Returning false here (as this did until step157) told the runtime the
+    // thread could not be interrupted, so a collection proceeded believing the
+    // world had stopped while that thread kept mutating the heap.
+    {
+        HANDLE hThread = GetThreadHandle();
+        if (hThread == INVALID_HANDLE_VALUE)
+        {
+            return false;
+        }
+
+        m_hasPendingActivation = true;
+        BOOL success = ::PAL_InjectActivation(hThread);
+        if (!success)
+        {
+            m_hasPendingActivation = false;
+        }
+
+        return success;
+    }
 #else
 #error Unknown platform.
 #endif // FEATURE_SPECIAL_USER_MODE_APC || TARGET_UNIX
@@ -5988,7 +6044,11 @@ bool Thread::InjectActivation(ActivationReason reason)
 void ThreadSuspend::Initialize()
 {
 #ifdef FEATURE_HIJACK
-#if defined(TARGET_UNIX) && !defined(TARGET_SHARPOS)
+#if defined(TARGET_UNIX)
+    // TARGET_SHARPOS included: the kernel needs both pointers — the handler to
+    // run on the interrupted thread, and the safe-point check to ask before
+    // interrupting it. Excluding SharpOS here left the kernel with nothing to
+    // call even once injection was implemented.
     ::PAL_SetActivationFunction(HandleSuspensionForInterruptedThread, CheckActivationSafePoint);
 #elif defined(TARGET_WINDOWS)
     if (Thread::AreShadowStacksEnabled())

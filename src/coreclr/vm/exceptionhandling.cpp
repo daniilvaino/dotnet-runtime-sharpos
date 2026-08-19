@@ -577,8 +577,34 @@ static void DispatchLongJmp(IN     PEXCEPTION_RECORD   pExceptionRecord,
 // Verbose-gated so the diagnostic prints under default-quiet config.
 extern "C" void SharpOSHost_DebugWrite(const uint8_t*, int);
 
+// Whether the exception-dispatch trace prints at all.
+//
+// It was bring-up instrumentation (step103) left permanently on, and the note
+// above said so approvingly. That was affordable while exceptions were rare
+// and deliberate. They are not: PowerShell throws on ordinary paths — writing
+// its module analysis cache fails on our filesystem every command — and each
+// throw printed hundreds of lines of stack dump down a serial port. That is
+// the pause after a command: the CPU is neither working nor waiting, it is
+// printing.
+//
+// Policy belongs to the kernel (Probes.EhVerboseDiagnostics). Queried once and
+// cached, because this sits on the exception path itself.
+extern "C" int SharpOSHost_EhDiagEnabled();
+
+static int s_sharpOsEhDiag = -1;
+
+static bool SharpOS_PCRE_On()
+{
+    if (s_sharpOsEhDiag < 0)
+    {
+        s_sharpOsEhDiag = SharpOSHost_EhDiagEnabled();
+    }
+    return s_sharpOsEhDiag != 0;
+}
+
 static void SharpOS_PCRE_Write(const char* s)
 {
+    if (!SharpOS_PCRE_On()) return;
     int n = 0;
     while (s[n] != 0) n++;
     SharpOSHost_DebugWrite((const uint8_t*)s, n);
@@ -586,6 +612,7 @@ static void SharpOS_PCRE_Write(const char* s)
 
 static void SharpOS_PCRE_Hex(uint64_t value)
 {
+    if (!SharpOS_PCRE_On()) return;
     char buf[18];
     buf[0] = '0';
     buf[1] = 'x';
@@ -2395,6 +2422,24 @@ EXTERN_C void* SharpOSHost_GetCurrentFrame()
 {
     Thread* t = GetThread();
     return t ? (void*)t->m_pFrame : nullptr;
+}
+
+// Attach the calling thread to the runtime, creating its Thread object if
+// this is the first time the runtime has seen it. Needed because the
+// kernel delivers console control events (Ctrl+C) from a thread it made
+// itself: calling a registered managed handler from a thread the runtime
+// does not know threw EEException out of the callback prologue, and on a
+// bare kernel thread there is no managed frame to catch it - the shell
+// died instead of cancelling. Returns 1 when the thread is usable.
+EXTERN_C int SharpOSHost_AttachCurrentThread()
+{
+    Thread* t = GetThreadNULLOk();
+    if (t == NULL)
+    {
+        HRESULT hr = S_OK;
+        t = SetupThreadNoThrow(&hr);
+    }
+    return t != NULL ? 1 : 0;
 }
 
 EXTERN_C void SharpOSHost_SetCurrentFrame(void* newFrame)

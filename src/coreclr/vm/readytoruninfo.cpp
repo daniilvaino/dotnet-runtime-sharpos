@@ -458,7 +458,30 @@ static void LogR2r(const char *msg, PEAssembly *pPEAssembly)
     fflush(r2rLogFile);
 }
 
+#ifdef TARGET_SHARPOS
+// Whether a module's precompiled code is accepted was decided in silence: the
+// reason went to a log file that does not exist here, so an image full of ready
+// code could be rejected wholesale and everything JIT-compiled instead, with
+// nothing in the output to say so. One line per module answers it.
+extern "C" void SharpOSHost_DebugPrintForced(const char* s);
+// The name matters more than the reason: "unsupported header version" on a
+// facade assembly costs nothing, while the same line on the assembly that
+// holds PowerShell means every method in it is compiled from scratch at
+// startup. Not called "reject" any more either - the runtime routes its
+// success message through the same hook, and labelling that a rejection
+// made the output read backwards.
+static void SharpOsR2rLog(const char* msg, Module* pModule)
+{
+    SharpOSHost_DebugPrintForced("[r2r] ");
+    SharpOSHost_DebugPrintForced(pModule != NULL ? pModule->GetSimpleName() : "?");
+    SharpOSHost_DebugPrintForced(": ");
+    SharpOSHost_DebugPrintForced(msg != NULL ? msg : "config off");
+    SharpOSHost_DebugPrintForced("\n");
+}
+#define DoLog(msg) SharpOsR2rLog(msg, pModule)
+#else
 #define DoLog(msg) if (s_r2rLogFile != NULL) LogR2r(msg, pFile)
+#endif
 
 // Try to acquire an R2R image for exclusive use by a particular module.
 // Returns true if successful. Returns false if the image is already been used
@@ -650,6 +673,11 @@ PTR_ReadyToRunInfo ReadyToRunInfo::Initialize(Module * pModule, AllocMemTracker 
 
     DoLog("Ready to Run initialized successfully");
 
+#ifdef TARGET_SHARPOS
+    // Paired with the reject line: no output at all would leave "accepted" and
+    // "never consulted" indistinguishable.
+    SharpOsR2rLog("accepted", pModule);
+#endif
     return new (pMemory) ReadyToRunInfo(pModule, pModule->GetLoaderAllocator(), pLayout, pHeader, nativeImage, pamTracker);
 }
 

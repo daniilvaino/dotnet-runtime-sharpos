@@ -83,6 +83,12 @@ extern "C" __attribute__((weak)) void SharpOSHost_FileClose(void* /*h*/) {}
 // kernel image the strong managed exports win and these are dropped.
 extern "C" __attribute__((weak)) uint64_t SharpOSHost_CreateThread(void* /*startAddr*/, void* /*param*/, uint32_t /*creationFlags*/, uint32_t* /*tid*/) { return 0; }
 extern "C" __attribute__((weak)) uint32_t SharpOSHost_ResumeThread(uint64_t /*h*/) { return 0; }
+
+// Thread activation: the kernel-side exports are strong symbols coming from
+// ThreadActivation.cs, and the PAL forwarders that call them live in
+// winapi_shim.cpp — that is the translation unit the standalone coreclr.dll
+// links, while this file is compiled into a separate static library used only
+// by the kernel image. Nothing needed here.
 extern "C" __attribute__((weak)) void     SharpOSHost_ExitThread(uint32_t /*code*/) { for (;;) __asm__ volatile("hlt"); }
 extern "C" __attribute__((weak)) uint32_t SharpOSHost_GetCurrentThreadId() { return 1; }
 extern "C" __attribute__((weak)) void*    SharpOSHost_GetCurrentThread() { return (void*)(intptr_t)-2; }
@@ -3040,6 +3046,18 @@ CRT_REAL(RtlCaptureContext);
 //
 // Phase 6.1.b: set LockCount = -1 (unlocked sentinel). DebugInfo стайс 0
 // — CoreCLR typically checks LockCount, not DebugInfo, для lock state.
+// Real mutual exclusion, implemented kernel-side (OS/src/Kernel/Threading/
+// HostLocks.cs). These were a counter and empty bodies, which was sound only
+// while a thread could not lose the CPU inside a critical section. Preemption
+// made every one of them a race; the code-heap allocator was simply the first
+// to be caught at it.
+extern "C" void SharpOSHost_LockEnter(void* key);
+extern "C" int  SharpOSHost_LockTryEnter(void* key);
+extern "C" void SharpOSHost_LockLeave(void* key);
+extern "C" void SharpOSHost_LockReset(void* key);
+extern "C" int  SharpOSHost_CondWait(void* cv, void* lock_, uint32_t ms);
+extern "C" void SharpOSHost_CondWake(void* cv, int all);
+
 extern "C" void InitializeCriticalSection(void* cs) {
     // Phase 6.1.b: clean minimal impl. Removed TRACE_REAL + stack scan —
     // those added enough output noise that race conditions / register
@@ -3050,6 +3068,9 @@ extern "C" void InitializeCriticalSection(void* cs) {
         uint8_t* p = (uint8_t*)cs;
         for (int i = 0; i < 40; i++) p[i] = 0;
         *(int32_t*)(p + 0x08) = -1;
+        // Addresses are reused: drop any state the kernel still keeps for a
+        // previous lock that lived here.
+        SharpOSHost_LockReset(cs);
     }
 }
 CRT_REAL(InitializeCriticalSection);
@@ -3057,33 +3078,30 @@ CRT_REAL(InitializeCriticalSection);
 // emits a brief "[cs ping] N" so we can tell if runtime is alive but silent
 // (lots of CRT-internal CS ops without our diagnostic firing) vs truly stuck
 // in a tight CPU loop.
-static volatile uint64_t g_csPingCount = 0;
-extern "C" void EnterCriticalSection(void* cs) {
-    uint64_t n = ++g_csPingCount;
-    if ((n & 0x3FF) == 0) {  // every 1024th call
-        SharpOSHost_DebugPrint("[cs ping] n=0x");
-        SharpOSHost_DebugPrintHex(n);
-        SharpOSHost_DebugPrint(" cs=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)cs);
-        SharpOSHost_DebugPrint(" caller=0x");
-        SharpOSHost_DebugPrintHex((uint64_t)__builtin_return_address(0));
-        SharpOSHost_DebugPrint("\n");
-    }
-}
+extern "C" void EnterCriticalSection(void* cs)   { SharpOSHost_LockEnter(cs); }
 CRT_REAL(EnterCriticalSection);
-extern "C" void LeaveCriticalSection(void* /*cs*/)      { /* noisy */ }
+extern "C" int TryEnterCriticalSection(void* cs) { return SharpOSHost_LockTryEnter(cs); }
+CRT_REAL(TryEnterCriticalSection);
+extern "C" void LeaveCriticalSection(void* cs)   { SharpOSHost_LockLeave(cs); }
 CRT_REAL(LeaveCriticalSection);
 extern "C" void DeleteCriticalSection(void* /*cs*/)     { TRACE_REAL(DeleteCriticalSection); }
 CRT_REAL(DeleteCriticalSection);
 
-extern "C" void AcquireSRWLockExclusive(void* /*l*/) { /* noisy */ }
+// Reader/writer locks are taken exclusively in both modes. Shared access is
+// only safe while no writer is live, and granting it on that assumption is
+// how this class of corruption comes back. Over-serialised, never under.
+extern "C" void AcquireSRWLockExclusive(void* l) { SharpOSHost_LockEnter(l); }
 CRT_REAL(AcquireSRWLockExclusive);
-extern "C" void ReleaseSRWLockExclusive(void* /*l*/) { /* noisy */ }
+extern "C" void ReleaseSRWLockExclusive(void* l) { SharpOSHost_LockLeave(l); }
+extern "C" void AcquireSRWLockShared(void* l)    { SharpOSHost_LockEnter(l); }
+CRT_REAL(AcquireSRWLockShared);
+extern "C" void ReleaseSRWLockShared(void* l)    { SharpOSHost_LockLeave(l); }
+CRT_REAL(ReleaseSRWLockShared);
 CRT_REAL(ReleaseSRWLockExclusive);
-extern "C" void WakeAllConditionVariable(void* /*cv*/) { TRACE_REAL(WakeAllConditionVariable); }
+extern "C" void WakeAllConditionVariable(void* cv) { SharpOSHost_CondWake(cv, 1); }
 CRT_REAL(WakeAllConditionVariable);
-extern "C" int SleepConditionVariableSRW(void* /*cv*/, void* /*lock*/,
-                                         uint32_t /*ms*/, uint32_t /*flags*/) { TRACE_REAL(SleepConditionVariableSRW); return 1; }
+extern "C" int SleepConditionVariableSRW(void* cv, void* lock_,
+                                         uint32_t ms, uint32_t /*flags*/) { return SharpOSHost_CondWait(cv, lock_, ms); }
 CRT_REAL(SleepConditionVariableSRW);
 
 extern "C" void* EncodePointer(void* p) { /* noisy */ return p; }
@@ -3305,22 +3323,21 @@ CRT_REAL(FormatMessageW);
 // + WakeConditionVariable so the kernel32 resolver can wire all five.
 // Cooperative single-CPU means Sleep can just return immediately —
 // workers won't truly block but progress through the work queue.
-extern "C" void InitializeConditionVariable(void* /*cv*/) {
-    /* opaque pointer; first Sleep/Wake handles state */
+extern "C" void InitializeConditionVariable(void* cv) {
+    SharpOSHost_LockReset(cv);
 }
 CRT_REAL(InitializeConditionVariable);
 
-extern "C" int SleepConditionVariableCS(void* /*cv*/, void* /*cs*/, uint32_t /*dwMs*/) {
-    // Cooperative single-CPU: just succeed. Worker re-checks predicate
-    // and may loop. Matching shape of existing SleepConditionVariableSRW.
+extern "C" int SleepConditionVariableCS(void* cv, void* cs, uint32_t dwMs) {
+    // Answering "signalled" without waiting turned every predicate loop into
+    // a spin: pool workers never slept, so the thread with real work got a
+    // share of the CPU instead of the CPU.
     g_LastError = 0;
-    return 1;
+    return SharpOSHost_CondWait(cv, cs, dwMs);
 }
 CRT_REAL(SleepConditionVariableCS);
 
-extern "C" void WakeConditionVariable(void* /*cv*/) {
-    /* paired no-op with SleepConditionVariableCS */
-}
+extern "C" void WakeConditionVariable(void* cv) { SharpOSHost_CondWake(cv, 0); }
 CRT_REAL(WakeConditionVariable);
 
 // GetSystemTimes — ThreadPool hill-climber polls this for CPU utilization.
@@ -5461,12 +5478,14 @@ CRT_REAL(SetConsoleTextAttribute);
 
 // step126.9: kernel-side policy in ConsoleWin32.cs (SetConsoleCtrlHandler,
 // GetStartupInfo).
-extern "C" int  SharpOSHost_SetConsoleCtrlHandler(void);
+extern "C" int  SharpOSHost_SetConsoleCtrlHandler(void* handler, int add);
 extern "C" void SharpOSHost_GetStartupInfo(unsigned int* lpInfo, unsigned int structSize);
 
-extern "C" int SetConsoleCtrlHandler(void* /*HandlerRoutine*/, int /*Add*/) {
+extern "C" int SetConsoleCtrlHandler(void* HandlerRoutine, int Add) {
     TRACE_REAL(SetConsoleCtrlHandler);
-    int ok = SharpOSHost_SetConsoleCtrlHandler();
+    // The routine used to be dropped here, so a shell that registered a
+    // break handler could never be interrupted.
+    int ok = SharpOSHost_SetConsoleCtrlHandler(HandlerRoutine, Add);
     g_LastError = ok ? 0 : 6;
     return ok;
 }
@@ -5518,6 +5537,7 @@ extern "C" int SharpOSHost_ReadConsoleInput(void* buffer, unsigned int length,
 extern "C" int SharpOSHost_PeekConsoleInput(void* buffer, unsigned int length,
                                             unsigned int* eventsRead);
 extern "C" int SharpOSHost_GetNumberOfConsoleInputEvents(unsigned int* count);
+extern "C" int SharpOSHost_FlushConsoleInputBuffer(void);
 
 extern "C" int ReadConsoleInputW(void* /*hConsoleInput*/, void* lpBuffer,
                                   unsigned long nLength, unsigned long* lpNumberOfEventsRead) {
@@ -5558,6 +5578,14 @@ extern "C" int GetNumberOfConsoleInputEvents(void* /*hConsoleInput*/,
     return ok;
 }
 CRT_REAL(GetNumberOfConsoleInputEvents);
+
+extern "C" int FlushConsoleInputBuffer(void* /*hConsoleInput*/) {
+    TRACE_REAL(FlushConsoleInputBuffer);
+    int ok = SharpOSHost_FlushConsoleInputBuffer();
+    g_LastError = ok ? 0 : 6;
+    return ok;
+}
+CRT_REAL(FlushConsoleInputBuffer);
 
 extern "C" int ReadConsoleA(void* /*hConsoleInput*/,
                              void* lpBuffer,
@@ -6549,10 +6577,13 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"SwitchToThread"))               return (void*)&SwitchToThread;
     if (sharpos_streq(n,"InitializeCriticalSection"))    return (void*)&InitializeCriticalSection;
     if (sharpos_streq(n,"EnterCriticalSection"))         return (void*)&EnterCriticalSection;
+    if (sharpos_streq(n,"TryEnterCriticalSection"))      return (void*)&TryEnterCriticalSection;
     if (sharpos_streq(n,"LeaveCriticalSection"))         return (void*)&LeaveCriticalSection;
     if (sharpos_streq(n,"DeleteCriticalSection"))        return (void*)&DeleteCriticalSection;
     if (sharpos_streq(n,"AcquireSRWLockExclusive"))      return (void*)&AcquireSRWLockExclusive;
     if (sharpos_streq(n,"ReleaseSRWLockExclusive"))      return (void*)&ReleaseSRWLockExclusive;
+    if (sharpos_streq(n,"AcquireSRWLockShared"))         return (void*)&AcquireSRWLockShared;
+    if (sharpos_streq(n,"ReleaseSRWLockShared"))         return (void*)&ReleaseSRWLockShared;
     if (sharpos_streq(n,"SleepConditionVariableSRW"))    return (void*)&SleepConditionVariableSRW;
     // Strings / codepage
     if (sharpos_streq(n,"MultiByteToWideChar"))          return (void*)&MultiByteToWideChar;
@@ -6648,6 +6679,7 @@ extern "C" void* sharpos_resolve_kernel32(const char* n) {
     if (sharpos_streq(n,"PeekConsoleInput"))             return (void*)&PeekConsoleInputW;
     if (sharpos_streq(n,"PeekConsoleInputW"))            return (void*)&PeekConsoleInputW;
     if (sharpos_streq(n,"GetNumberOfConsoleInputEvents")) return (void*)&GetNumberOfConsoleInputEvents;
+    if (sharpos_streq(n,"FlushConsoleInputBuffer"))      return (void*)&FlushConsoleInputBuffer;
     // GetConsoleWindow lives in kernel32 on Windows; it was only reachable
     // through the user32 sentinel, so PSReadLine's P/Invoke could not resolve it
     // and its whole initialization died on the entry-point lookup.

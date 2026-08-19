@@ -454,3 +454,36 @@ extern "C" void SharpOSHost_GetCtorTable(
         }
     }
 }
+
+
+// ── Thread activation ─────────────────────────────────────────────────────
+//
+// The runtime stops a thread here by asking the host to interrupt it
+// (vm/threadsuspend.cpp, Thread::InjectActivation). On Unix that is a signal;
+// on SharpOS the kernel delivers it from its timer interrupt, which already
+// runs on the interrupted thread's stack with a full register frame.
+//
+// These live in winapi_shim.cpp rather than crt_imp_stubs.cpp because that
+// file is compiled into a separate static library for the kernel and is not
+// part of the standalone coreclr.dll link — where these symbols are also
+// required.
+//
+// Pure forwarding, per the SharpOS invariant: WHEN a thread may be
+// interrupted, and the delivery itself, are decided in the kernel
+// (OS/src/PAL/SharpOSHost/ThreadActivation.cs).
+extern "C" __attribute__((weak)) void SharpOSHost_SetActivationFunction(void* /*activation*/, void* /*safeCheck*/) { }
+extern "C" __attribute__((weak)) int32_t SharpOSHost_InjectActivation(uint64_t /*h*/) { return 0; }
+
+extern "C" void PAL_SetActivationFunction(void* pActivationFunction, void* pSafeActivationCheckFunction)
+{
+    SharpOSHost_SetActivationFunction(pActivationFunction, pSafeActivationCheckFunction);
+}
+
+extern "C" BOOL PAL_InjectActivation(HANDLE hThread)
+{
+    return SharpOSHost_InjectActivation((uint64_t)hThread) != 0;
+}
+
+// Weak fallback so the standalone coreclr.dll links; the kernel image supplies
+// the strong export from Probes (OS/src/PAL/SharpOSHost/EhDiagnostics.cs).
+extern "C" __attribute__((weak)) int SharpOSHost_EhDiagEnabled() { return 0; }
