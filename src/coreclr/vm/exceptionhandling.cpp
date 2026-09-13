@@ -602,17 +602,15 @@ static bool SharpOS_PCRE_On()
     return s_sharpOsEhDiag != 0;
 }
 
-static void SharpOS_PCRE_Write(const char* s)
+static void SharpOS_PCRE_WriteImpl(const char* s)
 {
-    if (!SharpOS_PCRE_On()) return;
     int n = 0;
     while (s[n] != 0) n++;
     SharpOSHost_DebugWrite((const uint8_t*)s, n);
 }
 
-static void SharpOS_PCRE_Hex(uint64_t value)
+static void SharpOS_PCRE_HexImpl(uint64_t value)
 {
-    if (!SharpOS_PCRE_On()) return;
     char buf[18];
     buf[0] = '0';
     buf[1] = 'x';
@@ -624,6 +622,15 @@ static void SharpOS_PCRE_Hex(uint64_t value)
     }
     SharpOSHost_DebugWrite((const uint8_t*)buf, 18);
 }
+
+// The trace calls sit on every frame of every throw, and their arguments cost
+// more than the calls: register-display reads, frame lookups, a class name
+// built into a string. As functions that checked the switch inside, all of
+// that was computed and then thrown away — several percent of a throw with
+// tracing off (SharpOS step170). As macros they test the switch first and
+// evaluate nothing when it is off.
+#define SharpOS_PCRE_Write(s) do { if (SharpOS_PCRE_On()) SharpOS_PCRE_WriteImpl(s); } while (0)
+#define SharpOS_PCRE_Hex(v)   do { if (SharpOS_PCRE_On()) SharpOS_PCRE_HexImpl((uint64_t)(v)); } while (0)
 
 static bool SharpOS_PCRE_IsCurrentStackLink(SosCallDescrLink* link)
 {
@@ -658,6 +665,7 @@ static bool SharpOS_PCRE_IsCurrentStackLink(SosCallDescrLink* link)
 
 static void SharpOS_PCRE_DumpCallDescrChain(const char* prefix)
 {
+    if (!SharpOS_PCRE_On()) return;
     SosCallDescrLink* link = g_sosCallDescrChain;
     for (int n = 0; link != nullptr && n < 8; n++)
     {
@@ -690,7 +698,7 @@ static void SharpOS_PCRE_DumpCallDescrChain(const char* prefix)
     }
 }
 
-static void SharpOS_PCRE_Method(MethodDesc* pMD)
+static void SharpOS_PCRE_MethodImpl(MethodDesc* pMD)
 {
     if (pMD == NULL)
     {
@@ -707,6 +715,8 @@ static void SharpOS_PCRE_Method(MethodDesc* pMD)
     }
     SharpOS_PCRE_Write(pMD->GetName());
 }
+
+#define SharpOS_PCRE_Method(m) do { if (SharpOS_PCRE_On()) SharpOS_PCRE_MethodImpl(m); } while (0)
 #endif
 
 EXTERN_C EXCEPTION_DISPOSITION __cdecl
