@@ -3,6 +3,16 @@
 
 include AsmMacros_Shared.inc
 
+ifdef TARGET_SHARPOS
+;; SharpOS: the kernel image, linked into the same binary, exports RhpNewFast
+;; and RhNewString itself (its own NativeAOT runtime calls them by name). With
+;; the same names here the linker kept one of each -- the kernel's -- so these
+;; fast paths could not be installed for hosted code at all. Renamed for this
+;; target; vm/jitinterface.h maps the C++ declarations the same way.
+RhpNewFast  TEXTEQU <SharpOS_ClrRhpNewFast>
+RhNewString TEXTEQU <SharpOS_ClrRhNewString>
+endif
+
 
 ;; Allocate non-array, non-finalizable object. If the allocation doesn't fit into the current thread's
 ;; allocation context then automatically fallback to the slow allocation path.

@@ -6256,11 +6256,41 @@ extern "C" int GetThreadGroupAffinity(void* /*thread*/, void* groupAffinity) {
 }
 CRT_REAL(GetThreadGroupAffinity);
 
-extern "C" int GetLogicalProcessorInformation(void* /*buf*/, uint32_t* needed) {
+// The kernel decides which caches the CPU has (OS/src/Hal/CpuCaches.cs, from
+// CPUID) and hands them over as Windows CACHE_DESCRIPTOR records, 12 bytes
+// each. The GC sizes gen0 from the largest; without them it sat at its 256 KB
+// floor and collected ~40x as often as on Linux (SharpOS step169).
+extern "C" int SharpOSHost_GetCacheDescriptors(uint8_t* records, int capacity);
+
+// SYSTEM_LOGICAL_PROCESSOR_INFORMATION: ULONG_PTR ProcessorMask (0),
+// LOGICAL_PROCESSOR_RELATIONSHIP Relationship (8), union at 16 (CACHE_DESCRIPTOR
+// for RelationCache), 32 bytes in all. One core, then one entry per cache.
+extern "C" int GetLogicalProcessorInformation(void* buf, uint32_t* needed) {
     TRACE_REAL(GetLogicalProcessorInformation);
-    g_LastError = 122;
-    if (needed) *needed = 0;
-    return 0;
+    const int kMaxCaches = 8;
+    const uint32_t kEntry = 32;
+    uint8_t records[kMaxCaches * 12];
+    int caches = SharpOSHost_GetCacheDescriptors(records, kMaxCaches);
+    if (caches < 0) caches = 0;
+    uint32_t size = (uint32_t)(1 + caches) * kEntry;
+    if (needed == nullptr) { g_LastError = 87; return 0; }          // ERROR_INVALID_PARAMETER
+    if (buf == nullptr || *needed < size) {
+        *needed = size;
+        g_LastError = 122;                                            // ERROR_INSUFFICIENT_BUFFER
+        return 0;
+    }
+    uint8_t* p = (uint8_t*)buf;
+    for (uint32_t i = 0; i < size; i++) p[i] = 0;
+    *(uint64_t*)(p + 0) = 1;           // core 0
+    *(int32_t*)(p + 8) = 0;            // RelationProcessorCore
+    for (int c = 0; c < caches; c++) {
+        uint8_t* e = p + (uint32_t)(c + 1) * kEntry;
+        *(uint64_t*)(e + 0) = 1;
+        *(int32_t*)(e + 8) = 2;        // RelationCache
+        for (int b = 0; b < 12; b++) e[16 + b] = records[c * 12 + b];
+    }
+    *needed = size;
+    return 1;
 }
 CRT_REAL(GetLogicalProcessorInformation);
 

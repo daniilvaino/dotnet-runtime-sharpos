@@ -146,6 +146,15 @@ EXTERN_C FCDECL1(void*, JIT_GetDynamicGCStaticBaseNoCtor_Portable, DynamicStatic
 EXTERN_C FCDECL1(void*, JIT_GetDynamicNonGCStaticBaseNoCtor, DynamicStaticsInfo* pStaticsInfo);
 EXTERN_C FCDECL1(void*, JIT_GetDynamicNonGCStaticBaseNoCtor_Portable, DynamicStaticsInfo* pStaticsInfo);
 
+#if defined(TARGET_SHARPOS)
+// The kernel image exports RhpNewFast and RhNewString under these very names
+// (its own NativeAOT runtime calls them). CoreCLR's copies are renamed for this
+// target in runtime/amd64/AllocFast.asm, and mapped here to match, so both can
+// live in one binary and the fast paths can be installed (jitinterfacegen.cpp).
+#define RhpNewFast  SharpOS_ClrRhpNewFast
+#define RhNewString SharpOS_ClrRhNewString
+#endif
+
 EXTERN_C FCDECL1(Object*, RhpNewFast, CORINFO_CLASS_HANDLE typeHnd_);
 EXTERN_C FCDECL2(Object*, RhpNewArrayFast, CORINFO_CLASS_HANDLE typeHnd_, INT_PTR size);
 EXTERN_C FCDECL2(Object*, RhpNewPtrArrayFast, CORINFO_CLASS_HANDLE typeHnd_, INT_PTR size);
