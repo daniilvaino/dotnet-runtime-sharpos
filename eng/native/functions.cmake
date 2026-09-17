@@ -221,9 +221,22 @@ function(preprocess_file inputFilename outputFilename)
   endforeach()
 
   if (MSVC)
+    # SharpOS cross-host: на unix-хосте абсолютный путь начинается со слэша, и
+    # clang-cl в MSVC-режиме читает его как ключ — '/Users/...' становится
+    # опцией /U со значением 'sers/...', после чего компилятор жалуется
+    # "no input files". Разделитель '--' это снимает. Его понимает clang-cl, но
+    # не настоящий cl.exe, поэтому добавляем только под clang и только когда
+    # хост не Windows. /nologo уезжает вперёд: после '--' он стал бы именем файла.
+    # SHARPOS_SYSROOT_COMPILE_FLAGS задаёт тулчейн кросс-сборки; на Windows
+    # переменная пуста и команда не меняется. Без неё clang-cl не находит
+    # заголовки Windows SDK: CMAKE_CXX_FLAGS в самодельные команды не попадают.
+    set(_sharpos_input_sep "")
+    if (NOT CMAKE_HOST_WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+      set(_sharpos_input_sep "--")
+    endif()
     add_custom_command(
         OUTPUT ${outputFilename}
-        COMMAND ${CMAKE_CXX_COMPILER} ${PREPROCESS_INCLUDE_DIRECTORIES} /P /EP /TC ${PREPROCESS_DEFINITIONS}  /Fi${outputFilename}  ${inputFilename} /nologo
+        COMMAND ${CMAKE_CXX_COMPILER} ${SHARPOS_SYSROOT_COMPILE_FLAGS} ${PREPROCESS_INCLUDE_DIRECTORIES} /nologo /P /EP /TC ${PREPROCESS_DEFINITIONS}  /Fi${outputFilename}  ${_sharpos_input_sep} ${inputFilename}
         DEPENDS ${inputFilename}
         COMMENT "Preprocessing ${inputFilename}. Outputting to ${outputFilename}"
     )

@@ -9,7 +9,13 @@ set( CORGUIDS_IDL_SOURCES
   sospriv.idl
 )
 
-if(CLR_CMAKE_HOST_WIN32)
+# SharpOS cross-host: условие смотрит на НАСТОЯЩИЙ хост, а не на цель.
+# CLR_CMAKE_HOST_WIN32 при кросс-сборке описывает цель (Windows ABI), и по нему
+# мы уходили бы в ветку midl.exe — а это виндовый исполняемый файл, которого на
+# macOS и Linux нет и замены в LLVM тоже (сборка падала с Error 127). Ветка ниже
+# ровно для этого случая и написана: в дереве лежат заранее сгенерированные
+# pal/prebuilt/idl/*_i.cpp, ими и пользуемся.
+if(CLR_CMAKE_HOST_WIN32 AND CMAKE_HOST_WIN32)
     #Build for corguids is done in two steps:
     #1. compile .idl to *_i.c : This is done using custom midl command
     #2. compile *_i.c to .lib
@@ -37,7 +43,7 @@ if(CLR_CMAKE_HOST_WIN32)
     # Compile *_i.c as C files
     add_compile_options(/TC)
 
-else(CLR_CMAKE_HOST_WIN32)
+else()
 
     #The MIDL tool exists for Windows only, so for other systems, we have the prebuilt xxx_i.cpp files checked in
 
@@ -48,7 +54,7 @@ else(CLR_CMAKE_HOST_WIN32)
         list(APPEND CORGUIDS_SOURCES ${C_SOURCE})
     endforeach(IDL_SOURCE)
 
-endif(CLR_CMAKE_HOST_WIN32)
+endif()
 
 # Compile *_i.cpp to lib
 add_library_clr(corguids OBJECT ${CORGUIDS_SOURCES})

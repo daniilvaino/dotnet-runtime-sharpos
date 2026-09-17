@@ -84,6 +84,14 @@ __CodeCoverage=0
 
 # Set the various build properties here so that CMake and MSBuild can pick them up
 __Compiler=clang
+
+# SharpOS cross-host: сборка с unix-хоста идёт через clang-cl (MSVC-драйвер)
+# с sysroot от xwin, а init-compiler.sh ищет обычный clang и перебивает
+# CC/CXX/CFLAGS своими. gen-buildsys.sh пропускает init-compiler.sh, если
+# компилятор назван "default", — тогда наши CC/CXX/CFLAGS доживают до cmake.
+if [[ "${CLR_CROSS_COMPILER_DEFAULT:-}" == "1" ]]; then
+    __Compiler=default
+fi
 __CommonMSBuildArgs=
 __ConfigureOnly=0
 __CrossBuild=0

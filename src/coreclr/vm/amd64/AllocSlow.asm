@@ -121,20 +121,27 @@ LEAF_END RhpNewFast_UP, _TEXT
 ;  RDX == character/element count
 ;
 NEW_ARRAY_FAST_UP MACRO
+        ; SharpOS cross-host: именованная метка заменена анонимной (@@ / @F).
+        ; Макрос раскрывается трижды, и именованная метка определялась три раза:
+        ; ml64 разводит такие метки по областям процедур и молчит, llvm-ml
+        ; сообщает "symbol 'NewArrayFast_RarePath' is already defined".
+        ; Директиву LOCAL, которая была бы каноничнее, llvm-ml не поддерживает
+        ; вовсе ("invalid instruction mnemonic 'local'"). Анонимные метки —
+        ; штатный MASM, их понимают оба ассемблера, сборка на Windows не меняется.
 
         inc         [g_global_alloc_lock]
         jnz         RhpNewVariableSizeObject
 
         mov         r8, rax
         add         rax, [g_global_alloc_context + OFFSETOF__ee_alloc_context__alloc_ptr]
-        jc          NewArrayFast_RarePath
+        jc          @F
 
         ; rax == new alloc ptr
         ; rcx == MethodTable
         ; rdx == element count
         ; r8 == array size
         cmp         rax, [g_global_alloc_context + OFFSETOF__ee_alloc_context__combined_limit]
-        ja          NewArrayFast_RarePath
+        ja          @F
 
         mov         [g_global_alloc_context + OFFSETOF__ee_alloc_context__alloc_ptr], rax
 
@@ -146,7 +153,7 @@ NEW_ARRAY_FAST_UP MACRO
         mov         [g_global_alloc_lock], -1
         ret
 
-NewArrayFast_RarePath:
+@@:
         mov         [g_global_alloc_lock], -1
         jmp         RhpNewVariableSizeObject
 
