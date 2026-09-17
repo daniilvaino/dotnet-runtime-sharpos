@@ -55,7 +55,10 @@ ComCallPreStub_STACK_FRAME_SIZE = ComCallPreStub_STACK_FRAME_SIZE + 8
 ComCallPreStub_ERRORRETVAL_NEGOFFSET = ComCallPreStub_STACK_FRAME_SIZE
 
 ; Ensure that the offset of the XMM save area will be 16-byte aligned.
-if ((ComCallPreStub_STACK_FRAME_SIZE + SIZEOF__Frame + 8) mod 16) ne 0
+; SharpOS cross-host: оператор MASM `mod` llvm-ml не поддерживает — остаток
+; выражен через деление и умножение (см. AsmMacros.inc).
+__CCPS_align = ComCallPreStub_STACK_FRAME_SIZE + SIZEOF__Frame + 8
+if ((__CCPS_align - (__CCPS_align / 16) * 16)) ne 0
 ComCallPreStub_STACK_FRAME_SIZE = ComCallPreStub_STACK_FRAME_SIZE + 8
 endif
 

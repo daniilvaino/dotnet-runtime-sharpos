@@ -365,7 +365,10 @@ PROLOG_WITH_TRANSITION_BLOCK macro extraLocals := <0>, stackAllocOnEntry := <0>,
 
         __PWTB_FloatArgumentRegisters = SIZEOF_MAX_OUTGOING_ARGUMENT_HOMES + extraLocals
 
-        if (__PWTB_FloatArgumentRegisters mod 16) ne 0
+        ; SharpOS cross-host: оператор MASM `mod` llvm-ml не поддерживает
+        ; ("expected ')'"). Остаток по модулю выражен через деление и
+        ; умножение — они есть в обоих ассемблерах, значение то же.
+        if ((__PWTB_FloatArgumentRegisters - (__PWTB_FloatArgumentRegisters / 16) * 16)) ne 0
         __PWTB_FloatArgumentRegisters = __PWTB_FloatArgumentRegisters + 8
         endif
 
