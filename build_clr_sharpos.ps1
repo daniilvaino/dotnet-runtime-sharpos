@@ -286,8 +286,15 @@ try {
         }
 
         $BinDir = Join-Path $ForkRoot ('artifacts/bin/coreclr/windows.x64.' + $Configuration)
+        # На unix-хосте слияние libcmt пропускается (см. выше), и подпись об
+        # обратном была бы неправдой: ядро берёт libcmt.lib из sysroot само.
+        $staticLabel = if ($UnixHost) {
+            'coreclr_static.lib (kernel input, libcmt отдельно из sysroot)'
+        } else {
+            'coreclr_static.lib (kernel input, libcmt merged)'
+        }
         $Outputs = @(
-            @{ Path = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'; Label = 'coreclr_static.lib (kernel input, libcmt merged)' }
+            @{ Path = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'; Label = $staticLabel }
             @{ Path = Join-Path $BinDir 'coreclr.dll';        Label = 'coreclr.dll (SHARED target)' }
             @{ Path = Join-Path $BinDir 'mscordaccore.dll';   Label = 'mscordaccore.dll (DAC)' }
             @{ Path = Join-Path $ObjDir 'dlls/mscorrc/mscorrc.lib'; Label = 'mscorrc.lib (compiled-in resources)' }

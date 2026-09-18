@@ -478,17 +478,19 @@
     <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler.Build.Tasks\ILCompiler.Build.Tasks.csproj" Category="clr" Condition="'$(SdkToolsSupported)' == 'true' or '$(NativeAotSupported)' == 'true'" />
 
     <!--
-      SharpOS: эти два проекта публикуют САМОДОСТАТОЧНЫЕ копии ILC и crossgen2 под
-      целевой RID, чтобы их можно было запускать на самой цели. SharpOS их не
-      запускает: и AOT ядра, и crossgen библиотеки делаются на машине сборки
-      вариантами _inbuild, которые строятся всегда (см. выше). Собраться под
-      кросс-хостом они и не могут: RID у них целевой (win-x64), а флаги имён
-      разделяемых библиотек берутся хостовые — на macOS выходит требование
-      несуществующего libjitinterface_x64.dylib.
-      Тем же признаком уже отключён clr.packages (см. ниже).
+      SharpOS на ЧУЖОЙ ОС: эти два проекта публикуют самодостаточные копии ILC и
+      crossgen2 под целевой RID (win-x64). Собраться вне Windows они не могут:
+      RID целевой, а флаги имён разделяемых библиотек берутся хостовые — на
+      macOS выходит требование несуществующего libjitinterface_x64.dylib.
+      Условие сужено до HostOS != TargetOS намеренно: на Windows их выход
+      нужен, run_build.ps1 в репозитории SharpOS берёт из
+      artifacts/bin/crossgen2_publish сборки фреймворка под win-x64 для
+      Stage A hosting. Отключать их там — значит тихо ломать этот путь.
+      Для самой сборки они не нужны ни там, ни там: и AOT ядра, и crossgen
+      библиотеки делаются на машине сборки вариантами _inbuild (см. выше).
     -->
-    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler\ILCompiler_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true' and '$(SharpOSBuild)' != 'true'" Category="clr" />
-    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\crossgen2\crossgen2_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true' and '$(SharpOSBuild)' != 'true'" Category="clr" />
+    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler\ILCompiler_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true' and ('$(SharpOSBuild)' != 'true' or '$(HostOS)' == '$(TargetOS)')" Category="clr" />
+    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\crossgen2\crossgen2_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true' and ('$(SharpOSBuild)' != 'true' or '$(HostOS)' == '$(TargetOS)')" Category="clr" />
 
 
     <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler\ILCompiler.csproj" Condition="'$(SdkToolsSupported)' == 'true'" Category="clr" />
