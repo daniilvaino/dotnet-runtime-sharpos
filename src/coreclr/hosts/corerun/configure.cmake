@@ -1,3 +1,9 @@
+# SharpOS cross-host: модуль подключается явно. Обычно он уже подтянут
+# другими файлами настройки, но в сборке кросс-инструментов этот файл
+# читается раньше них и падает с "Unknown CMake command
+# check_symbol_exists". Подключение идемпотентно.
+include(CheckSymbolExists)
+include(CheckStructHasMember)
 check_symbol_exists(getauxval sys/auxv.h HAVE_GETAUXVAL)
 check_struct_has_member ("struct dirent" d_type dirent.h HAVE_DIRENT_D_TYPE)
 

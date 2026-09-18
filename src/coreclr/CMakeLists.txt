@@ -14,7 +14,12 @@ include_directories("${CLR_SRC_NATIVE_DIR}/inc")
 # Added BEFORE так что pal/sharpos/include/strings.h overrides nothing if MSVC
 # has one (it doesn't, but defensive). Inherited by all subsystems (vm, gc,
 # jit, debug) that include pal.h.
-if (CLR_CMAKE_TARGET_SHARPOS)
+# SharpOS cross-host: в сборке кросс-инструментов эти заглушки НЕ подключаются.
+# Та сборка идёт под хост (macOS, Linux), где настоящие POSIX-заголовки есть, а
+# наш unistd.h заслоняет системный и прячет объявления — компиляция падает на
+# "call to undeclared function 'getpid'". Заглушки нужны только там, где
+# системных заголовков нет, то есть при сборке под саму цель.
+if (CLR_CMAKE_TARGET_SHARPOS AND NOT CLR_CROSS_COMPONENTS_BUILD)
     include_directories(BEFORE "${CMAKE_CURRENT_SOURCE_DIR}/pal/sharpos/include")
 endif()
 

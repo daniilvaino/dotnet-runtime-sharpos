@@ -28,6 +28,21 @@
 # Плюс CLR_CROSS_COMPILER_DEFAULT=1 в окружении, иначе build-runtime.sh
 # перебьёт компилятор через init-compiler.sh.
 
+# Сборка кросс-инструментов идёт под ХОСТ (здесь osx-arm64), а не под цель:
+# crossgen2 — управляемый инструмент, он бежит на хосте и дёргает JIT через
+# нативную прослойку libjitinterface. Наш тулчейн ей не просто не нужен, он
+# ломает настройку: CMAKE_SYSTEM_NAME=Windows выставляется до подключения
+# модулей cmake, и hosts/corerun падает с "Unknown CMake command
+# check_symbol_exists". Признак такой сборки — CLR_CROSS_COMPONENTS_BUILD,
+# его ставит build-runtime.sh.
+# Признак передаётся и во внутренние пробы cmake (try_compile): туда -D с
+# командной строки не доходит, и без этого проба перечитывает тулчейн уже без
+# признака, применяет настройки под Windows и ломает сборку под хост.
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES CLR_CROSS_COMPONENTS_BUILD)
+if(CLR_CROSS_COMPONENTS_BUILD)
+  return()
+endif()
+
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR AMD64)
 set(CMAKE_CROSSCOMPILING TRUE)
@@ -145,10 +160,13 @@ set(SHARPOS_SYSROOT_COMPILE_FLAGS
 # Компилятор ресурсов (llvm-rc) свои пути включения не наследует ни от
 # /winsdkdir, ни от CMAKE_C_FLAGS — ему нужен явный -I, иначе .rc не находит
 # даже verrsrc.h.
-# llvm-ml по умолчанию собирает 32-битный код, в отличие от ml64. Без -m64
-# ассемблер ругается "register %r12 is only available in 64-bit mode" и
-# ".seh_* directives are not supported on this target".
-set(CMAKE_ASM_MASM_FLAGS_INIT "-m64")
+# Ключ разрядности ассемблера здесь НЕ задаётся. CMAKE_ASM_MASM_FLAGS_INIT
+# засевает одноимённую кеш-переменную, а eng/native/configurecompiler.cmake
+# потом дописывает туда же SHARPOS_ASM_MASM_TARGET_FLAG — в строке оказывались
+# оба ключа сразу. Для JWasm это фатально: у него -m64 означает МОДЕЛЬ ПАМЯТИ
+# и съедает следующие аргументы, из-за чего /nologo и /Zi становятся именами
+# файлов ("Cannot open file: /nologo"). Два ассемблера читают одну строку
+# противоположно, поэтому ключ задаётся ровно в одном месте.
 
 set(CMAKE_RC_FLAGS_INIT "-I ${SHARPOS_XWIN_SPLAT}/sdk/include/um -I ${SHARPOS_XWIN_SPLAT}/sdk/include/shared -I ${SHARPOS_XWIN_SPLAT}/sdk/include/ucrt -I ${SHARPOS_XWIN_SPLAT}/crt/include")
 

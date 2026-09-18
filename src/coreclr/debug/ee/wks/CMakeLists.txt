@@ -22,7 +22,7 @@ if (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
     if (CMAKE_HOST_WIN32)
       set(ASM_OPTIONS /c /Zi /W3 /errorReport:prompt)
     else()
-      set(ASM_OPTIONS /c /Zi)
+      set(ASM_OPTIONS -c -Zi)
     endif()
 
     if (CLR_CMAKE_HOST_ARCH_I386)

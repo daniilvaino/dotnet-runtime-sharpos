@@ -104,12 +104,15 @@ if(CLR_CMAKE_HOST_UNIX OR CLR_CMAKE_TARGET_SHARPOS)
   target_link_libraries(utilcodestaticnohost PUBLIC nativeresourcestring)
   if (NOT CLR_CMAKE_TARGET_ARCH_WASM)
     target_link_libraries(utilcode_dac PUBLIC nativeresourcestring)
-    if(CLR_CMAKE_HOST_UNIX)
+    # SharpOS cross-host: см. ниже — PAL цели под хост не строится.
+    if(CLR_CMAKE_HOST_UNIX AND NOT CLR_CROSS_COMPONENTS_BUILD)
       add_dependencies(utilcode_dac coreclrpal)
     endif()
   endif()
   target_link_libraries(utilcode INTERFACE nativeresourcestring)
-  if(CLR_CMAKE_HOST_UNIX)
+  # SharpOS cross-host: в сборке кросс-инструментов PAL цели не собирается
+  # (см. pal/CMakeLists.txt), поэтому и зависеть от него нельзя.
+  if(CLR_CMAKE_HOST_UNIX AND NOT CLR_CROSS_COMPONENTS_BUILD)
     add_dependencies(utilcode coreclrpal)
   endif()
 endif()

@@ -372,7 +372,13 @@
     <!-- crossgen2/ILC have dependencies on the JITs, so build them if the cross component includes crossgen2/ILC. -->
     <_CrossToolSubset Condition="'$(_BuildCrossComponents)' == 'true' and ($(_subset.Contains('+clr.tools+')) or $(_subset.Contains('+clr.nativecorelib+')) or $(_subset.Contains('+clr.crossarchtools+')))" Include="ClrAllJitsSubset=true" />
     <!-- When targeting Windows, we need to build a copy of the diagnostic libraries that can run on the host to enable remote debugging of a local build. -->
-    <_CrossToolSubset Condition="'$(_BuildCrossComponents)' == 'true' and '$(TargetsWindows)' == 'true'" Include="ClrDebugSubset=true" />
+    <!-- SharpOS: при сборке форка эти библиотеки не нужны. Они дают удалённую
+         отладку локальной сборки, а к ядру SharpOS отладчик не цепляется. При
+         кросс-сборке с unix-хоста они к тому же не собираются: DAC под хост
+         тянет заголовки вроде link.h и sys/elf.h, которых на macOS нет. Без
+         этого исключения падает весь clr.crossarchtools, а с ним crossgen
+         corelib и упаковка — то есть hosted-ярус остаётся пустым. -->
+    <_CrossToolSubset Condition="'$(_BuildCrossComponents)' == 'true' and '$(TargetsWindows)' == 'true' and '$(SharpOSBuild)' != 'true'" Include="ClrDebugSubset=true" />
     <!--
     In a vertical orchestrated build, we need to produce an ilasm and ildasm for use by upstack repositories.
       However, these repositories only build on Windows, so we can limit this to only execute on Windows to avoid additional infrastructure work when not necessary.

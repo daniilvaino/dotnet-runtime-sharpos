@@ -1023,7 +1023,13 @@ if (MSVC)
   # Set Warning Level 4:
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/w44177>) # Pragma data_seg s/b at global scope.
 
-  add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,ASM_MASM>:/Zi>) # enable debugging information
+  # SharpOS cross-host: ассемблеру ключ идёт через дефис (см. /nologo выше).
+  if (CMAKE_HOST_WIN32)
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,ASM_MASM>:/Zi>) # enable debugging information
+  else()
+    add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/Zi>)
+    add_compile_options($<$<COMPILE_LANGUAGE:ASM_MASM>:-Zi>)
+  endif()
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/ZH:SHA_256>) # use SHA256 for generating hashes of compiler processed source files.
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/source-charset:utf-8>) # Force MSVC to compile source as UTF-8.
 
@@ -1104,7 +1110,15 @@ if (MSVC)
   # Don't display the output header when building RC files.
   set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /nologo")
   # Don't display the output header when building asm files.
-  set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} /nologo")
+  # SharpOS cross-host: у JWasm на unix ключи задаются через дефис. Аргумент
+  # вида /nologo он принимает за путь к файлу и падает с "Cannot open file",
+  # при этом сам исходник собирает — из-за чего сборка выглядит успешной, а
+  # код возврата ненулевой.
+  if (CMAKE_HOST_WIN32)
+    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} /nologo")
+  else()
+    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} -nologo")
+  endif()
   # SharpOS cross-host: llvm-ml, в отличие от ml64, по умолчанию собирает
   # 32-битный код — отсюда "register %r12 is only available in 64-bit mode" и
   # ".seh_* directives are not supported on this target". Задавать через
