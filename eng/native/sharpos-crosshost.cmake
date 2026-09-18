@@ -119,7 +119,7 @@ endif()
 
 foreach(_tool SHARPOS_CLANG_CL SHARPOS_LLD_LINK SHARPOS_LLVM_LIB SHARPOS_LLVM_RC SHARPOS_ASM_MASM)
   if(${_tool} MATCHES "NOTFOUND")
-    message(FATAL_ERROR "${_tool} не найден. macOS: brew install llvm@19 lld. Linux: пакеты llvm-19 и lld. JWasm — из исходников, см. выше.")
+    message(FATAL_ERROR "${_tool} не найден. macOS: brew install llvm@22 lld. Linux: пакеты llvm-22 и lld. JWasm — из исходников, см. выше.")
   endif()
 endforeach()
 
