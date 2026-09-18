@@ -1111,7 +1111,9 @@ if (MSVC)
   # CMAKE_ASM_MASM_FLAGS_INIT в тулчейне бесполезно: строка выше пересобирает
   # переменную и значение теряется.
   if (NOT CMAKE_HOST_WIN32 AND CLR_CMAKE_TARGET_ARCH_AMD64)
-    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} -m64")
+    # Ключ задаёт тулчейн: JWasm понимает -win64, llvm-ml -m64. Оба по
+    # умолчанию собирают 32-битный код, в отличие от ml64.
+    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} ${SHARPOS_ASM_MASM_TARGET_FLAG}")
   endif()
 endif (MSVC)
 

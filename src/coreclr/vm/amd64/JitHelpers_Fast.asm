@@ -344,7 +344,12 @@ ifdef _DEBUG
         mov r10, 0CDCDCDCDCDCDCDCDh ; The real helper clobbers these registers, so clobber them too in the fake helper
         mov r11, 0CDCDCDCDCDCDCDCDh
 endif
-        rexw jmp rax
+        ; SharpOS cross-host: директиву rexw JWasm не понимает. REX.W перед
+        ; jmp rax избыточен по смыслу, но задан намеренно — он удлиняет
+        ; инструкцию до трёх байт, что нужно для последующего патчинга.
+        ; Выписываем префикс байтом, кодировка та же.
+        db 048h               ; префикс REX.W
+        jmp rax
 LEAF_END JIT_DispatchIndirectCall, _TEXT
 
 

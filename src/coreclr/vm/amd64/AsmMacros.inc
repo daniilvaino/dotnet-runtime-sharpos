@@ -1,3 +1,8 @@
+; SharpOS cross-host: у директив .errnz/.erre снят текст сообщения и уведён
+; в комментарий. JWasm (он заменяет ml64 при сборке с unix-хоста) понимает
+; только одноаргументную форму, а текст после запятой разбирает как код —
+; отсюда каскады "Error A2209: Syntax error". Это проверки времени сборки:
+; условие сохранено полностью, теряется только текст в сообщении ml64.
 ; Licensed to the .NET Foundation under one or more agreements.
 ; The .NET Foundation licenses this file to you under the MIT license.
 
@@ -7,8 +12,7 @@
 
 push_nonvol_reg macro Reg
 
-        .errnz ___STACK_ADJUSTMENT_FORBIDDEN, <push_nonvol_reg cannot be used after save_reg_postrsp>
-
+        .errnz ___STACK_ADJUSTMENT_FORBIDDEN   ; <push_nonvol_reg cannot be used after save_reg_postrsp>
         push    Reg
         .pushreg Reg
 
@@ -16,8 +20,7 @@ push_nonvol_reg macro Reg
 
 push_vol_reg macro Reg
 
-        .errnz ___STACK_ADJUSTMENT_FORBIDDEN, push_vol_reg cannot be used after save_reg_postrsp
-
+        .errnz ___STACK_ADJUSTMENT_FORBIDDEN   ; push_vol_reg cannot be used after save_reg_postrsp
         push    Reg
         .allocstack 8
 
@@ -25,8 +28,7 @@ push_vol_reg macro Reg
 
 push_eflags macro
 
-        .errnz ___STACK_ADJUSTMENT_FORBIDDEN, push_eflags cannot be used after save_reg_postrsp
-
+        .errnz ___STACK_ADJUSTMENT_FORBIDDEN   ; push_eflags cannot be used after save_reg_postrsp
         pushfq
         .allocstack 8
 
@@ -34,8 +36,7 @@ push_eflags macro
 
 alloc_stack macro Size
 
-        .errnz ___STACK_ADJUSTMENT_FORBIDDEN, alloc_stack cannot be used after save_reg_postrsp
-
+        .errnz ___STACK_ADJUSTMENT_FORBIDDEN   ; alloc_stack cannot be used after save_reg_postrsp
         sub     rsp, Size
         .allocstack Size
 
@@ -43,8 +44,7 @@ alloc_stack macro Size
 
 save_reg_frame macro Reg, FrameReg, Offset
 
-        .erre ___FRAME_REG_SET, save_reg_frame cannot be used before set_frame
-
+        .erre ___FRAME_REG_SET   ; save_reg_frame cannot be used before set_frame
         mov     Offset[FrameReg], Reg
         .savereg Reg, Offset
 
@@ -52,8 +52,7 @@ save_reg_frame macro Reg, FrameReg, Offset
 
 save_reg_postrsp macro Reg, Offset
 
-        .errnz ___FRAME_REG_SET, save_reg_postrsp cannot be used after set_frame
-
+        .errnz ___FRAME_REG_SET   ; save_reg_postrsp cannot be used after set_frame
         mov     Offset[rsp], Reg
         .savereg Reg, Offset
 
@@ -63,8 +62,7 @@ save_reg_postrsp macro Reg, Offset
 
 save_xmm128_frame macro Reg, FrameReg, Offset
 
-        .erre ___FRAME_REG_SET, save_xmm128_frame cannot be used before set_frame
-
+        .erre ___FRAME_REG_SET   ; save_xmm128_frame cannot be used before set_frame
         movdqa  Offset[FrameReg], Reg
         .savexmm128 Reg, Offset
 
@@ -72,8 +70,7 @@ save_xmm128_frame macro Reg, FrameReg, Offset
 
 save_xmm128_postrsp macro Reg, Offset
 
-        .errnz ___FRAME_REG_SET, save_reg_postrsp cannot be used after set_frame
-
+        .errnz ___FRAME_REG_SET   ; save_reg_postrsp cannot be used after set_frame
         movdqa  Offset[rsp], Reg
         .savexmm128 Reg, Offset
 
@@ -83,8 +80,7 @@ save_xmm128_postrsp macro Reg, Offset
 
 set_frame macro Reg, Offset
 
-        .errnz ___FRAME_REG_SET, set_frame cannot be used more than once
-
+        .errnz ___FRAME_REG_SET   ; set_frame cannot be used more than once
 if Offset
 
         lea     Reg, Offset[rsp]
@@ -253,7 +249,9 @@ NOP_2_BYTE macro
 
 NOP_3_BYTE macro
 
-        nop dword ptr [rax]
+        ; SharpOS cross-host: JWasm не принимает nop с операндом.
+        ; Кодировка проверена llvm-mc: 0F 1F 00 — те же три байта.
+        db 00Fh, 01Fh, 000h   ; nop dword ptr [rax]
 
         endm
 
@@ -365,10 +363,7 @@ PROLOG_WITH_TRANSITION_BLOCK macro extraLocals := <0>, stackAllocOnEntry := <0>,
 
         __PWTB_FloatArgumentRegisters = SIZEOF_MAX_OUTGOING_ARGUMENT_HOMES + extraLocals
 
-        ; SharpOS cross-host: оператор MASM `mod` llvm-ml не поддерживает
-        ; ("expected ')'"). Остаток по модулю выражен через деление и
-        ; умножение — они есть в обоих ассемблерах, значение то же.
-        if ((__PWTB_FloatArgumentRegisters - (__PWTB_FloatArgumentRegisters / 16) * 16)) ne 0
+        if (__PWTB_FloatArgumentRegisters mod 16) ne 0
         __PWTB_FloatArgumentRegisters = __PWTB_FloatArgumentRegisters + 8
         endif
 
@@ -376,8 +371,7 @@ PROLOG_WITH_TRANSITION_BLOCK macro extraLocals := <0>, stackAllocOnEntry := <0>,
         __PWTB_TransitionBlock = __PWTB_StackAlloc
         __PWTB_ArgumentRegisters = __PWTB_StackAlloc + 9 * 8
 
-        .errnz stackAllocOnEntry ge 4*8, Max supported stackAllocOnEntry is 3*8
-
+        .errnz stackAllocOnEntry ge 4*8   ; Max supported stackAllocOnEntry is 3*8
         if stackAllocOnEntry gt 0
         .allocstack stackAllocOnEntry
         endif

@@ -1,8 +1,3 @@
-; SharpOS cross-host: `real8 ptr` / `real4 ptr` заменены на `qword ptr` /
-; `dword ptr`. llvm-ml (он заменяет ml64 при сборке с unix-хоста) MASM-указатели
-; для плавающей точки не понимает, а размер операнда у movss/movsd и так задан
-; кодом инструкции — подмена семантически пустая. ml64 обе формы принимает,
-; поэтому сборка на Windows не меняется.
 ; Licensed to the .NET Foundation under one or more agreements.
 ; The .NET Foundation licenses this file to you under the MIT license.
 
@@ -117,13 +112,13 @@ LEAF_ENTRY setFPReturn, _TEXT
         cmp     ecx, 8
         jne     setFPReturnNot8
         mov     [rsp+10h], rdx
-        movsd   xmm0, qword ptr [rsp+10h]
+        movsd   xmm0, real8 ptr [rsp+10h]
 setFPReturnNot8:
         REPRET
 
 setFPReturn4:
         mov     [rsp+10h], rdx
-        movss   xmm0, dword ptr [rsp+10h]
+        movss   xmm0, real4 ptr [rsp+10h]
         ret
 LEAF_END setFPReturn, _TEXT
 
@@ -134,12 +129,12 @@ LEAF_ENTRY getFPReturn, _TEXT
         je      getFPReturn4
         cmp     ecx, 8
         jne     getFPReturnNot8
-        movsd   qword ptr [rdx], xmm0
+        movsd   real8 ptr [rdx], xmm0
 getFPReturnNot8:
         REPRET
 
 getFPReturn4:
-        movss   dword ptr [rdx], xmm0
+        movss   real4 ptr [rdx], xmm0
         ret
 LEAF_END getFPReturn, _TEXT
 
@@ -264,10 +259,10 @@ NESTED_ENTRY ProfileEnterNaked, _TEXT
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 20h], rdx    ;                 -- struct profiledRsp field
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 28h], r8     ; r8 is null      -- struct rax field
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 30h], r8     ; r8 is null      -- struct hiddenArg field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 38h], xmm0    ;      -- struct flt0 field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 40h], xmm1    ;      -- struct flt1 field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 48h], xmm2    ;      -- struct flt2 field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 50h], xmm3    ;      -- struct flt3 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 38h], xmm0    ;      -- struct flt0 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 40h], xmm1    ;      -- struct flt1 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 48h], xmm2    ;      -- struct flt2 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 50h], xmm3    ;      -- struct flt3 field
         mov                     r10, PROFILE_ENTER
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 58h], r10d   ; flags    ;      -- struct flags field
 
@@ -314,10 +309,10 @@ NESTED_ENTRY ProfileLeaveNaked, _TEXT
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 20h], rdx    ;                 -- struct profiledRsp field
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 28h], rax    ; return value    -- struct rax field
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 30h], r8     ; r8 is null      -- struct hiddenArg field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 38h], xmm0    ;      -- struct flt0 field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 40h], xmm1    ;      -- struct flt1 field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 48h], xmm2    ;      -- struct flt2 field
-        movsd                   qword ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 50h], xmm3    ;      -- struct flt3 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 38h], xmm0    ;      -- struct flt0 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 40h], xmm1    ;      -- struct flt1 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 48h], xmm2    ;      -- struct flt2 field
+        movsd                   real8 ptr [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 50h], xmm3    ;      -- struct flt3 field
         mov                     r10, PROFILE_LEAVE
         mov                     [rsp + OFFSETOF_PLATFORM_SPECIFIC_DATA + 58h], r10d   ; flags           -- struct flags field
 
@@ -623,7 +618,7 @@ END_PROLOGUE
         mov             rdx, rbx ; the IR bytecode pointer
         xor             r8, r8
         call            ExecuteInterpretedMethod
-        movsd           xmm0, qword ptr [rax]
+        movsd           xmm0, real8 ptr [rax]
         add             rsp, 028h
         ret
 NESTED_END InterpreterStubRetDouble, _TEXT
@@ -804,80 +799,80 @@ LEAF_ENTRY Store_R9, _TEXT
 LEAF_END Store_R9, _TEXT
 
 LEAF_ENTRY Store_XMM0, _TEXT
-        movsd qword ptr [r10], xmm0
+        movsd real8 ptr [r10], xmm0
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM0, _TEXT
 
 LEAF_ENTRY Store_XMM0_XMM1, _TEXT
-        movsd qword ptr [r10], xmm0
-        movsd qword ptr [r10 + 8], xmm1
+        movsd real8 ptr [r10], xmm0
+        movsd real8 ptr [r10 + 8], xmm1
         add r10, 16
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM0_XMM1, _TEXT
 
 LEAF_ENTRY Store_XMM0_XMM1_XMM2, _TEXT
-        movsd qword ptr [r10], xmm0
-        movsd qword ptr [r10 + 8], xmm1
-        movsd qword ptr [r10 + 16], xmm2
+        movsd real8 ptr [r10], xmm0
+        movsd real8 ptr [r10 + 8], xmm1
+        movsd real8 ptr [r10 + 16], xmm2
         add r10, 24
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM0_XMM1_XMM2, _TEXT
 
 LEAF_ENTRY Store_XMM0_XMM1_XMM2_XMM3, _TEXT
-        movsd qword ptr [r10], xmm0
-        movsd qword ptr [r10 + 8], xmm1
-        movsd qword ptr [r10 + 16], xmm2
-        movsd qword ptr [r10 + 24], xmm3
+        movsd real8 ptr [r10], xmm0
+        movsd real8 ptr [r10 + 8], xmm1
+        movsd real8 ptr [r10 + 16], xmm2
+        movsd real8 ptr [r10 + 24], xmm3
         add r10, 32
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM0_XMM1_XMM2_XMM3, _TEXT
 
 LEAF_ENTRY Store_XMM1, _TEXT
-        movsd qword ptr [r10], xmm1
+        movsd real8 ptr [r10], xmm1
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM1, _TEXT
 
 LEAF_ENTRY Store_XMM1_XMM2, _TEXT
-        movsd qword ptr [r10], xmm1
-        movsd qword ptr [r10 + 8], xmm2
+        movsd real8 ptr [r10], xmm1
+        movsd real8 ptr [r10 + 8], xmm2
         add r10, 16
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM1_XMM2, _TEXT
 
 LEAF_ENTRY Store_XMM1_XMM2_XMM3, _TEXT
-        movsd qword ptr [r10], xmm1
-        movsd qword ptr [r10 + 8], xmm2
-        movsd qword ptr [r10 + 16], xmm3
+        movsd real8 ptr [r10], xmm1
+        movsd real8 ptr [r10 + 8], xmm2
+        movsd real8 ptr [r10 + 16], xmm3
         add r10, 24
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM1_XMM2_XMM3, _TEXT
 
 LEAF_ENTRY Store_XMM2, _TEXT
-        movsd qword ptr [r10], xmm2
+        movsd real8 ptr [r10], xmm2
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM2, _TEXT
 
 LEAF_ENTRY Store_XMM2_XMM3, _TEXT
-        movsd qword ptr [r10], xmm2
-        movsd qword ptr [r10 + 8], xmm3
+        movsd real8 ptr [r10], xmm2
+        movsd real8 ptr [r10 + 8], xmm3
         add r10, 16
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Store_XMM2_XMM3, _TEXT
 
 LEAF_ENTRY Store_XMM3, _TEXT
-        movsd qword ptr [r10], xmm3
+        movsd real8 ptr [r10], xmm3
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
@@ -1021,80 +1016,80 @@ LEAF_END Load_R9, _TEXT
 ; Routines for passing arguments in floating point registers XMM0..XMM3
 
 LEAF_ENTRY Load_XMM0, _TEXT
-        movsd xmm0, qword ptr [r10]
+        movsd xmm0, real8 ptr [r10]
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM0, _TEXT
 
 LEAF_ENTRY Load_XMM0_XMM1, _TEXT
-        movsd xmm0, qword ptr [r10]
-        movsd xmm1, qword ptr [r10 + 8]
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
         add r10, 10h
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM0_XMM1, _TEXT
 
 LEAF_ENTRY Load_XMM0_XMM1_XMM2, _TEXT
-        movsd xmm0, qword ptr [r10]
-        movsd xmm1, qword ptr [r10 + 8]
-        movsd xmm2, qword ptr [r10 + 16]
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
         add r10, 24
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM0_XMM1_XMM2, _TEXT
 
 LEAF_ENTRY Load_XMM0_XMM1_XMM2_XMM3, _TEXT
-        movsd xmm0, qword ptr [r10]
-        movsd xmm1, qword ptr [r10 + 8]
-        movsd xmm2, qword ptr [r10 + 16]
-        movsd xmm3, qword ptr [r10 + 24]
+        movsd xmm0, real8 ptr [r10]
+        movsd xmm1, real8 ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10 + 16]
+        movsd xmm3, real8 ptr [r10 + 24]
         add r10, 32
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM0_XMM1_XMM2_XMM3, _TEXT
 
 LEAF_ENTRY Load_XMM1, _TEXT
-        movsd xmm1, qword ptr [r10]
+        movsd xmm1, real8 ptr [r10]
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM1, _TEXT
 
 LEAF_ENTRY Load_XMM1_XMM2, _TEXT
-        movsd xmm1, qword ptr [r10]
-        movsd xmm2, qword ptr [r10 + 8]
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
         add r10, 16
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM1_XMM2, _TEXT
 
 LEAF_ENTRY Load_XMM1_XMM2_XMM3, _TEXT
-        movsd xmm1, qword ptr [r10]
-        movsd xmm2, qword ptr [r10 + 8]
-        movsd xmm3, qword ptr [r10 + 16]
+        movsd xmm1, real8 ptr [r10]
+        movsd xmm2, real8 ptr [r10 + 8]
+        movsd xmm3, real8 ptr [r10 + 16]
         add r10, 24
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM1_XMM2_XMM3, _TEXT
 
 LEAF_ENTRY Load_XMM2, _TEXT
-        movsd xmm2, qword ptr [r10]
+        movsd xmm2, real8 ptr [r10]
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM2, _TEXT
 
 LEAF_ENTRY Load_XMM2_XMM3, _TEXT
-        movsd xmm2, qword ptr [r10]
-        movsd xmm3, qword ptr [r10 + 8]
+        movsd xmm2, real8 ptr [r10]
+        movsd xmm3, real8 ptr [r10 + 8]
         add r10, 16
         add r11, 8
         jmp qword ptr [r11]
 LEAF_END Load_XMM2_XMM3, _TEXT
 
 LEAF_ENTRY Load_XMM3, _TEXT
-        movsd xmm3, qword ptr [r10]
+        movsd xmm3, real8 ptr [r10]
         add r10, 8
         add r11, 8
         jmp qword ptr [r11]
@@ -1157,7 +1152,7 @@ END_PROLOGUE
         mov r10, rdx ; interpreter stack args
         call qword ptr [r11]
         mov r8, [rbp - 8]
-        movsd qword ptr [r8], xmm0
+        movsd real8 ptr [r8], xmm0
         mov rsp, rbp
         pop rbp
         ret

@@ -1,8 +1,3 @@
-; SharpOS cross-host: `real8 ptr` / `real4 ptr` заменены на `qword ptr` /
-; `dword ptr`. llvm-ml (он заменяет ml64 при сборке с unix-хоста) MASM-указатели
-; для плавающей точки не понимает, а размер операнда у movss/movsd и так задан
-; кодом инструкции — подмена семантически пустая. ml64 обе формы принимает,
-; поэтому сборка на Windows не меняется.
 ; Licensed to the .NET Foundation under one or more agreements.
 ; The .NET Foundation licenses this file to you under the MIT license.
 
@@ -30,11 +25,11 @@ NESTED_ENTRY GenericCLRToCOMCallStub, _TEXT
         lea             rcx, [rsp + __PWTB_FloatArgumentRegisters - 8]
         cmp             rax, 4
         jne             @F
-        movss           xmm0, dword ptr [rcx]
+        movss           xmm0, real4 ptr [rcx]
 @@:
         cmp             rax, 8
         jne             @F
-        movsd           xmm0, qword ptr [rcx]
+        movsd           xmm0, real8 ptr [rcx]
 @@:
         ; load return value
         mov             rax, [rcx]

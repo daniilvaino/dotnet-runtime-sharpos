@@ -1,8 +1,3 @@
-; SharpOS cross-host: `real8 ptr` / `real4 ptr` заменены на `qword ptr` /
-; `dword ptr`. llvm-ml (он заменяет ml64 при сборке с unix-хоста) MASM-указатели
-; для плавающей точки не понимает, а размер операнда у movss/movsd и так задан
-; кодом инструкции — подмена семантически пустая. ml64 обе формы принимает,
-; поэтому сборка на Windows не меняется.
 ; Licensed to the .NET Foundation under one or more agreements.
 ; The .NET Foundation licenses this file to you under the MIT license.
 
@@ -48,29 +43,29 @@ StackCopyLoop:                          ; copy the arguments to stack top-down t
         mov     rax, [rbx + CallDescrData__dwRegTypeMap] ; save the reg (arg) type map
 
         mov     rcx, 0[rsp]             ; load first four argument registers
-        movss   xmm0, dword ptr 0[rsp]  ;
+        movss   xmm0, real4 ptr 0[rsp]  ;
         cmp     al, ASM_ELEMENT_TYPE_R8 ;
         jnz     Arg2                    ;
-        movsd   xmm0, qword ptr 0[rsp]  ;
+        movsd   xmm0, real8 ptr 0[rsp]  ;
 Arg2:
         mov     rdx, 8[rsp]             ;
-        movss   xmm1, dword ptr 8[rsp]  ;
+        movss   xmm1, real4 ptr 8[rsp]  ;
         cmp     ah, ASM_ELEMENT_TYPE_R8 ;
         jnz     Arg3                    ;
-        movsd   xmm1, qword ptr 8[rsp]  ;
+        movsd   xmm1, real8 ptr 8[rsp]  ;
 Arg3:
         mov     r8, 10h[rsp]            ;
-        movss   xmm2, dword ptr 10h[rsp];
+        movss   xmm2, real4 ptr 10h[rsp];
         shr     eax, 16                 ;
         cmp     al, ASM_ELEMENT_TYPE_R8 ;
         jnz     Arg4                    ;
-        movsd   xmm2, qword ptr 10h[rsp];
+        movsd   xmm2, real8 ptr 10h[rsp];
 Arg4:
         mov     r9, 18h[rsp]            ;
-        movss   xmm3, dword ptr 18h[rsp];
+        movss   xmm3, real4 ptr 18h[rsp];
         cmp     ah, ASM_ELEMENT_TYPE_R8 ;
         jnz     DoCall                  ;
-        movsd   xmm3, qword ptr 18h[rsp];
+        movsd   xmm3, real8 ptr 18h[rsp];
 DoCall:
         call    qword ptr [rbx+CallDescrData__pTarget]     ; call target function
 CallDescrWorkerInternalReturnAddress:
@@ -98,11 +93,11 @@ Epilog:
         ret
 
 ReturnsFloat:
-        movss   dword ptr [rbx+CallDescrData__returnValue], xmm0
+        movss   real4 ptr [rbx+CallDescrData__returnValue], xmm0
         jmp     Epilog
 
 ReturnsDouble:
-        movsd   qword ptr [rbx+CallDescrData__returnValue], xmm0
+        movsd   real8 ptr [rbx+CallDescrData__returnValue], xmm0
         jmp     Epilog
 
 PATCH_LABEL CallDescrWorkerInternalReturnAddressOffset

@@ -179,7 +179,15 @@ if(CLR_CMAKE_HOST_WIN32)
     add_custom_command(
         DEPENDS mscordaccore_def "${CURRENT_BINARY_DIR_FOR_CONFIG}/mscordac.def" mscordacobj daccess
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.exp
-        COMMAND lib.exe /NOLOGO /OUT:"${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.lib" /DEF:"${CURRENT_BINARY_DIR_FOR_CONFIG}/mscordac.def" "$<TARGET_FILE:daccess>" $<$<CONFIG:Release,Relwithdebifo>:/LTCG> ${STATIC_LIBRARY_FLAGS} $<TARGET_OBJECTS:mscordacobj>
+        # SharpOS cross-host: имя инструмента берётся из CMAKE_AR, а не пишется
+        # жёстко. На unix-хосте lib.exe нет — его заменяет llvm-lib, который
+        # задаёт тулчейн (eng/native/sharpos-crosshost.cmake). На Windows
+        # CMAKE_AR указывает на тот же lib.exe, поэтому поведение не меняется.
+        # /machine нужен явно: llvm-lib, в отличие от lib.exe, не выводит
+        # архитектуру из объектных файлов и отвергает /DEF без неё
+        # ("/def option requires /machine to be specified"). lib.exe этот
+        # ключ тоже принимает, так что сборка на Windows не меняется.
+        COMMAND ${CMAKE_AR} /NOLOGO /machine:x64 /OUT:"${CMAKE_CURRENT_BINARY_DIR}/mscordaccore.lib" /DEF:"${CURRENT_BINARY_DIR_FOR_CONFIG}/mscordac.def" "$<TARGET_FILE:daccess>" $<$<CONFIG:Release,Relwithdebifo>:/LTCG> ${STATIC_LIBRARY_FLAGS} $<TARGET_OBJECTS:mscordacobj>
         COMMENT "Generating mscordaccore.exp export file"
     )
 

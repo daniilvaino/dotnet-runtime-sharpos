@@ -50,7 +50,9 @@ NESTED_ENTRY ClrRestoreNonvolatileContextWorker, _TEXT
 
         test    r11, r11
         je      No_Ssp_Update
-        rdsspq  rax
+        ; SharpOS cross-host: инструкции теневого стека (CET) JWasm не знает.
+        ; Кодировки сверены llvm-mc.
+        db 0F3h, 048h, 00Fh, 01Eh, 0C8h   ; rdsspq rax
         sub     r11, rax
         shr     r11, 3
         ; the incsspq instruction uses only the lowest 8 bits of the argument, so we need to loop in case the increment is larger than 255
@@ -58,7 +60,7 @@ NESTED_ENTRY ClrRestoreNonvolatileContextWorker, _TEXT
     Update_Loop:
         cmp     r11, rax
         cmovb   rax, r11
-        incsspq rax
+        db 0F3h, 048h, 00Fh, 0AEh, 0E8h   ; incsspq rax
         sub     r11, rax
         ja      Update_Loop
     No_Ssp_Update:

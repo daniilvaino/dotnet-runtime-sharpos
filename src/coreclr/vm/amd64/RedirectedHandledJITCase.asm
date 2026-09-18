@@ -1,3 +1,8 @@
+; SharpOS cross-host: у директив .errnz/.erre снят текст сообщения и уведён
+; в комментарий. JWasm (он заменяет ml64 при сборке с unix-хоста) понимает
+; только одноаргументную форму, а текст после запятой разбирает как код —
+; отсюда каскады "Error A2209: Syntax error". Это проверки времени сборки:
+; условие сохранено полностью, теряется только текст в сообщении ml64.
 ; Licensed to the .NET Foundation under one or more agreements.
 ; The .NET Foundation licenses this file to you under the MIT license.
 
@@ -45,8 +50,7 @@ NESTED_ENTRY RedirectedHandledJITCaseFor&reason&_Stub, _TEXT, FixRedirectContext
         alloc_stack     28h                     ; CONTEXT*, callee scratch area
         set_frame       rbp, 0
 
-.errnz REDIRECTSTUB_ESTABLISHER_OFFSET_RBP, REDIRECTSTUB_ESTABLISHER_OFFSET_RBP has changed - update asm stubs
-
+.errnz REDIRECTSTUB_ESTABLISHER_OFFSET_RBP   ; REDIRECTSTUB_ESTABLISHER_OFFSET_RBP has changed - update asm stubs
         END_PROLOGUE
 
         ;
@@ -62,8 +66,7 @@ NESTED_ENTRY RedirectedHandledJITCaseFor&reason&_Stub, _TEXT, FixRedirectContext
         call            GetCurrentSavedRedirectContext
 
         mov             [rbp+20h], rax
-.errnz REDIRECTSTUB_RBP_OFFSET_CONTEXT - 20h, REDIRECTSTUB_RBP_OFFSET_CONTEXT has changed - update asm stubs
-
+.errnz REDIRECTSTUB_RBP_OFFSET_CONTEXT - 20h   ; REDIRECTSTUB_RBP_OFFSET_CONTEXT has changed - update asm stubs
         ;
         ; Fetch the interrupted rip and save it as our return address.
         ;
@@ -105,7 +108,11 @@ SIZEOF__FaultingExceptionFrame = SIZEOF__FaultingExceptionFrame
 
 GenerateRedirectedStubWithFrame macro STUB, FILTER, TARGET
 
-altentry STUB&_RspAligned
+; SharpOS cross-host: директиву altentry JWasm не поддерживает. Она объявляла
+; STUB&_RspAligned дополнительной точкой входа, чтобы метка была видна за
+; пределами своей процедуры — иначе call ниже её не находит. Тот же результат
+; даёт объявление метки глобальной через двойное двоеточие (см. её определение
+; ниже), и такую форму понимают оба ассемблера.
 
 NESTED_ENTRY STUB, _TEXT, FILTER
 
@@ -120,12 +127,14 @@ NESTED_ENTRY STUB, _TEXT, FILTER
         push            rcx
 
         xor             rax, rax
-        rdsspq          rax
+        ; SharpOS cross-host: инструкция теневого стека (CET), JWasm её не знает.
+        ; Кодировка сверена llvm-mc — те же пять байт.
+        db 0F3h, 048h, 00Fh, 01Eh, 0C8h   ; rdsspq rax
 
         test            rsp, 0fh
         jnz             STUB&_FixRsp
 
-STUB&_RspAligned:
+STUB&_RspAligned::
 
         ; Any stack operations hereafter must be recorded in the unwind info, but
         ; only nonvolatile register locations are needed.  Anything else is only
@@ -136,8 +145,7 @@ STUB&_RspAligned:
 
         alloc_stack     OFFSET_OF_FRAME + SIZEOF__FaultingExceptionFrame
 
-.errnz THROWSTUB_ESTABLISHER_OFFSET_FaultingExceptionFrame - OFFSET_OF_FRAME, THROWSTUB_ESTABLISHER_OFFSET_FaultingExceptionFrame has changed - update asm stubs
-
+.errnz THROWSTUB_ESTABLISHER_OFFSET_FaultingExceptionFrame - OFFSET_OF_FRAME   ; THROWSTUB_ESTABLISHER_OFFSET_FaultingExceptionFrame has changed - update asm stubs
         END_PROLOGUE
 
         lea             rcx, [rsp + OFFSET_OF_FRAME]
@@ -220,15 +228,14 @@ NESTED_ENTRY ApcActivationCallbackStub, _TEXT, FixRedirectContextHandler
         push_nonvol_reg rbp
         alloc_stack     30h ; padding for alignment, CONTEXT *, callee scratch area
         set_frame       rbp, 0
-    .errnz REDIRECTSTUB_ESTABLISHER_OFFSET_RBP, REDIRECTSTUB_ESTABLISHER_OFFSET_RBP has changed - update asm stubs
+    .errnz REDIRECTSTUB_ESTABLISHER_OFFSET_RBP   ; REDIRECTSTUB_ESTABLISHER_OFFSET_RBP has changed - update asm stubs
         END_PROLOGUE
 
         ; Save a copy of the redirect CONTEXT*.
         ; This is needed for the debugger to unwind the stack.
         mov             rax, [rcx + OFFSETOF__APC_CALLBACK_DATA__ContextRecord]
         mov             [rbp + 20h], rax
-    .errnz REDIRECTSTUB_RBP_OFFSET_CONTEXT - 20h, REDIRECTSTUB_RBP_OFFSET_CONTEXT has changed - update asm stubs
-
+    .errnz REDIRECTSTUB_RBP_OFFSET_CONTEXT - 20h   ; REDIRECTSTUB_RBP_OFFSET_CONTEXT has changed - update asm stubs
         call            ?ApcActivationCallback@Thread@@CAX_K@Z
 
         add             rsp, 30h
