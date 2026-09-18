@@ -151,10 +151,17 @@ $clangFlags = @(
     '-Wno-c++11-narrowing'
 ) -join ' '
 
-$env:CC       = $ClangCl
-$env:CXX      = $ClangCl
-$env:CFLAGS   = $clangFlags
-$env:CXXFLAGS = $clangFlags
+# Только на Windows. На unix-хосте компилятор и флаги целевой сборки задаёт
+# тулчейн (sharpos-crosshost.cmake), а сборка кросс-инструментов ПОД ХОСТ
+# должна получить системный cc: clang-cl из окружения навязал бы ей triple
+# *-windows-msvc и без /vctoolsdir не нашёл бы даже stdlib.h. На macOS это
+# скрывалось кешем — каталог хостовой сборки был сконфигурирован вручную.
+if (-not $UnixHost) {
+    $env:CC       = $ClangCl
+    $env:CXX      = $ClangCl
+    $env:CFLAGS   = $clangFlags
+    $env:CXXFLAGS = $clangFlags
+}
 
 # CMake args: TARGET_SHARPOS triggers наши additive patches across:
 #   - clrfeatures.cmake (FEATURE_STATICALLY_LINKED)

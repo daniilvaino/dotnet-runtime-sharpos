@@ -31,7 +31,16 @@ function(generate_module_index Target ModuleIndexFile)
 endfunction(generate_module_index)
 
 if(NOT DEFINED CLR_CROSS_COMPONENTS_BUILD)
-    generate_module_index(coreclr ${CMAKE_CURRENT_BINARY_DIR}/runtimemoduleindex.h)
+    # SharpOS cross-host: на Linux-хосте genmoduleindex.sh идёт по не-Darwin
+    # ветке и требует третьим аргументом readelf ("$3: unbound variable"), а
+    # coreclr здесь — PE, идентификатора сборки в понимании ELF у него нет.
+    # На macOS dwarfdump на PE молча выдаёт пустой индекс. Кладём ту же
+    # заглушку "указателя нет", что и для dac/dbi ниже.
+    if(CMAKE_HOST_WIN32 OR NOT CLR_CMAKE_TARGET_SHARPOS)
+        generate_module_index(coreclr ${CMAKE_CURRENT_BINARY_DIR}/runtimemoduleindex.h)
+    else()
+        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/runtimemoduleindex.h "0x00,\n")
+    endif()
     # SharpOS cross-host: при сборке с unix-хоста отладочные компоненты не
     # собираются (см. dlls/CMakeLists.txt), и ссылаться на них нельзя — cmake
     # падает с "No target mscordbi". Но runtimeinfo.cpp включает эти заголовки

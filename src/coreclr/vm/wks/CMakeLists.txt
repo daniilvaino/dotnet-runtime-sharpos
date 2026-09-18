@@ -37,6 +37,25 @@ if (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
 
     add_custom_target(asmconstants_inc DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/AsmConstants.inc)
 
+    # SharpOS cross-host: часть .asm пишет `include asmconstants.inc` строчными,
+    # ml64 регистра не различает, а JWasm открывает файл как есть — на
+    # case-sensitive ФС (Linux) include не находится. Даём второе имя
+    # символической ссылкой. Только на case-sensitive ФС: на macOS оба имени —
+    # один файл, и ссылка замкнулась бы сама на себя.
+    if(NOT CMAKE_HOST_WIN32)
+        file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/CaseProbe.tmp" "")
+        if(EXISTS "${CMAKE_CURRENT_BINARY_DIR}/caseprobe.tmp")
+            set(_sharpos_fs_case_sensitive FALSE)
+        else()
+            set(_sharpos_fs_case_sensitive TRUE)
+        endif()
+        file(REMOVE "${CMAKE_CURRENT_BINARY_DIR}/CaseProbe.tmp")
+        if(_sharpos_fs_case_sensitive)
+            execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink AsmConstants.inc asmconstants.inc
+                            WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
+        endif()
+    endif()
+
     add_dependencies(cee_wks_core asmconstants_inc)
     add_dependencies(cee_wks asmconstants_inc)
     add_dependencies(cee_wks_mergeable asmconstants_inc)

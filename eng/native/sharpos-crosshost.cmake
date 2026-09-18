@@ -40,6 +40,16 @@
 # признака, применяет настройки под Windows и ломает сборку под хост.
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES CLR_CROSS_COMPONENTS_BUILD)
 if(CLR_CROSS_COMPONENTS_BUILD)
+  # Сборка под хост не должна видеть CC/CXX=clang-cl из окружения: тулчейн
+  # читается до определения компилятора, и пустые переменные вернут cmake к
+  # системному cc (gcc на Ubuntu, обёрнутый cc на NixOS). clang-cl в режиме cl
+  # навязывает triple *-windows-msvc и без /vctoolsdir не находит даже
+  # stdlib.h. На macOS это не всплывало только потому, что каталог хостовой
+  # сборки был сконфигурирован вручную без CC/CXX, а дальше жил на кеше.
+  set(ENV{CC} "")
+  set(ENV{CXX} "")
+  set(ENV{CFLAGS} "")
+  set(ENV{CXXFLAGS} "")
   return()
 endif()
 
@@ -119,7 +129,7 @@ endif()
 
 foreach(_tool SHARPOS_CLANG_CL SHARPOS_LLD_LINK SHARPOS_LLVM_LIB SHARPOS_LLVM_RC SHARPOS_ASM_MASM)
   if(${_tool} MATCHES "NOTFOUND")
-    message(FATAL_ERROR "${_tool} не найден. macOS: brew install llvm@22 lld. Linux: пакеты llvm-22 и lld. JWasm — из исходников, см. выше.")
+    message(FATAL_ERROR "${_tool} не найден. macOS: brew install llvm@22 lld. Ubuntu: clang-22, llvm-22 и lld-22 с apt.llvm.org. NixOS: llvm 22 (clang unwrapped) в PATH. JWasm — из исходников, см. выше.")
   endif()
 endforeach()
 

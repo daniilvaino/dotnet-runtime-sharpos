@@ -128,7 +128,7 @@ if(CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
         version.lib
         shlwapi.lib
         bcrypt.lib
-        RuntimeObject.lib
+        runtimeobject.lib
         delayimp.lib
     )
 endif()
