@@ -74,7 +74,16 @@ if ($UnixHost) {
                         '/usr/lib/llvm-22/bin', '/opt/homebrew/opt/llvm/bin')) {
         if (Test-Path (Join-Path $root 'clang-cl')) { $ClangCl = Join-Path $root 'clang-cl'; break }
     }
-    if (-not $ClangCl) { throw "clang-cl не найден. macOS: brew install llvm@22. Linux: пакет clang-22." }
+    # Список выше — раскладки Homebrew и Debian. На NixOS (и везде, где LLVM
+    # приходит через окружение) таких каталогов нет, инструменты просто в PATH.
+    if (-not $ClangCl) {
+        $fromPath = Get-Command clang-cl -ErrorAction SilentlyContinue
+        if ($fromPath) { $ClangCl = $fromPath.Source }
+    }
+    if (-not $ClangCl) { throw "clang-cl не найден. macOS: brew install llvm@22. Linux: пакет clang-22. NixOS: llvm 22 в PATH (nix shell)." }
+    # Тулчейну cmake сообщаем тот же каталог: иначе при двух установленных
+    # LLVM скрипт и тулчейн могут выбрать разные версии.
+    $LlvmBin = Split-Path -Parent $ClangCl
 
     if (-not $XwinSplat) {
         $guess = Join-Path (Split-Path -Parent $ForkRoot) '.xwin-cache/splat'
@@ -229,7 +238,7 @@ try {
             '-os', 'windows'
             '-arch', 'x64'
             '-ninja'
-            '-cmakeargs', "$CMakeArgs -DCLR_CMAKE_HOST_ARCH=x64 -DCMAKE_TOOLCHAIN_FILE=$Toolchain -DSHARPOS_XWIN_SPLAT=$XwinSplat"
+            '-cmakeargs', "$CMakeArgs -DCLR_CMAKE_HOST_ARCH=x64 -DCMAKE_TOOLCHAIN_FILE=$Toolchain -DSHARPOS_XWIN_SPLAT=$XwinSplat -DSHARPOS_LLVM_BIN=$LlvmBin"
         ) + ($MsBuildProps -split ' ')
 
         Write-Host "`nStep 2/2: cross fork — build.sh $($CrossArgs -join ' ')`n" -ForegroundColor Cyan
