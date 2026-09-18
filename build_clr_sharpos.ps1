@@ -1,4 +1,4 @@
-﻿# build_clr_sharpos.ps1
+# build_clr_sharpos.ps1
 #
 # Build CoreCLR fork с TARGET_SHARPOS configuration.
 # Produces coreclr_sharpos_static.lib + dependencies для Phase 6.1
@@ -39,7 +39,11 @@ param(
     #     m_szDebugClassName, see RuntimeHelpers.CoreCLR.cs:800-818).
     # SkipLinuxIL=true keeps the old behavior (only Windows build) when the
     # Linux IL artifact is already up to date.
-    [switch]$SkipLinuxIL
+    [switch]$SkipLinuxIL,
+
+    # Кросс-сборка с unix-хоста: каталог splat, который делает xwin.
+    # По умолчанию берётся из окружения либо из .xwin-cache рядом с SharpOS.
+    [string]$XwinSplat = $env:SHARPOS_XWIN_SPLAT
 )
 
 $ErrorActionPreference = 'Stop'
@@ -52,15 +56,46 @@ $ForkRoot = $PSScriptRoot
 $ObjDir   = Join-Path $ForkRoot ('artifacts/obj/coreclr/windows.x64.' + $Configuration)
 $LogFile  = Join-Path $ForkRoot ('build-sharpos-' + $Configuration.ToLower() + '.log')
 
-# clang-cl location. Prefer LLVM standalone install at C:\Program Files\LLVM.
-# Falls back на VS-bundled clang if needed.
-$ClangCl = 'C:/PROGRA~1/LLVM/bin/clang-cl.exe'
-if (-not (Test-Path $ClangCl)) {
-    $VsClang = 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin/clang-cl.exe'
-    if (Test-Path $VsClang) {
-        $ClangCl = 'C:/PROGRA~1/MICROS~2/2022/COMMUN~1/VC/Tools/Llvm/x64/bin/clang-cl.exe'
-    } else {
-        throw "clang-cl.exe not found. Install LLVM (winget install LLVM.LLVM) or VS LLVM workload."
+# Хост. На unix цель та же (win-x64, TARGET_SHARPOS), меняется только
+# инструментарий: clang-cl + lld-link + llvm-lib + JWasm вместо MSVC, а
+# заголовки и библиотеки MSVC берутся из sysroot'а, который делает xwin.
+# Подробности и почему именно так — в eng/native/sharpos-crosshost.cmake.
+$UnixHost = -not $IsWindows
+
+if ($UnixHost) {
+    # Версия LLVM значима: clang 23 отвергает __try рядом с объектом,
+    # требующим раскрутки, а clang 19 — no_builtin на defaulted-функции.
+    # 22 проходит обе; ею же форк собирается на Windows.
+    $ClangCl = ''
+    foreach ($root in @('/opt/homebrew/opt/llvm@22/bin', '/usr/local/opt/llvm@22/bin',
+                        '/usr/lib/llvm-22/bin', '/opt/homebrew/opt/llvm/bin')) {
+        if (Test-Path (Join-Path $root 'clang-cl')) { $ClangCl = Join-Path $root 'clang-cl'; break }
+    }
+    if (-not $ClangCl) { throw "clang-cl не найден. macOS: brew install llvm@22. Linux: пакет clang-22." }
+
+    if (-not $XwinSplat) {
+        $guess = Join-Path (Split-Path -Parent $ForkRoot) '.xwin-cache/splat'
+        if (Test-Path $guess) { $XwinSplat = $guess }
+    }
+    if (-not $XwinSplat -or -not (Test-Path (Join-Path $XwinSplat 'crt/lib/x64'))) {
+        throw @"
+sysroot MSVC не найден. Сделайте его один раз:
+  xwin --accept-license --cache-dir <c> --arch x86_64 --sdk-version 10.0.22621 ``
+       splat --preserve-ms-arch-notation --include-debug-libs --output <c>/splat
+и передайте -XwinSplat <c>/splat либо SHARPOS_XWIN_SPLAT.
+"@
+    }
+} else {
+    # clang-cl location. Prefer LLVM standalone install at C:\Program Files\LLVM.
+    # Falls back на VS-bundled clang if needed.
+    $ClangCl = 'C:/PROGRA~1/LLVM/bin/clang-cl.exe'
+    if (-not (Test-Path $ClangCl)) {
+        $VsClang = 'C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin/clang-cl.exe'
+        if (Test-Path $VsClang) {
+            $ClangCl = 'C:/PROGRA~1/MICROS~2/2022/COMMUN~1/VC/Tools/Llvm/x64/bin/clang-cl.exe'
+        } else {
+            throw "clang-cl.exe not found. Install LLVM (winget install LLVM.LLVM) or VS LLVM workload."
+        }
     }
 }
 
@@ -148,7 +183,11 @@ try {
             'linux'
         ) + ($MsBuildProps -split ' ')
         Write-Host "`nStep 1/2: Linux SPC IL (cross) — build.cmd $($LinuxArgs -join ' ')`n" -ForegroundColor Cyan
-        & .\build.cmd @LinuxArgs 2>&1 | Tee-Object -FilePath ($LogFile + '.linux')
+        if ($UnixHost) {
+            & ./build.sh @LinuxArgs 2>&1 | Tee-Object -FilePath ($LogFile + '.linux')
+        } else {
+            & .\build.cmd @LinuxArgs 2>&1 | Tee-Object -FilePath ($LogFile + '.linux')
+        }
         if ($LASTEXITCODE -ne 0) {
             throw "Linux SPC IL build failed (exit $LASTEXITCODE). See $LogFile.linux"
         }
@@ -174,10 +213,28 @@ try {
         $CMakeArgs
     ) + ($MsBuildProps -split ' ')
 
-    Write-Host "`nStep 2/2: Windows fork — build.cmd $($BuildArgs -join ' ')`n" -ForegroundColor Cyan
+    if ($UnixHost) {
+        # Кросс-сборка: тулчейн-файл задаёт clang-cl/lld-link/llvm-lib/JWasm и
+        # sysroot; CLR_CROSS_COMPILER_DEFAULT не даёт init-compiler.sh перебить
+        # наши CC/CXX; -ninja — тот же генератор, что на Windows.
+        $env:CLR_CROSS_COMPILER_DEFAULT = '1'
+        $env:SHARPOS_XWIN_SPLAT = $XwinSplat
+        $Toolchain = Join-Path $ForkRoot 'eng/native/sharpos-crosshost.cmake'
+        $CrossArgs = @(
+            '-subset', 'clr'
+            '-configuration', $Configuration
+            '-os', 'windows'
+            '-arch', 'x64'
+            '-ninja'
+            '-cmakeargs', "$CMakeArgs -DCLR_CMAKE_HOST_ARCH=x64 -DCMAKE_TOOLCHAIN_FILE=$Toolchain -DSHARPOS_XWIN_SPLAT=$XwinSplat"
+        ) + ($MsBuildProps -split ' ')
 
-    & .\build.cmd @BuildArgs 2>&1 |
-        Tee-Object -FilePath $LogFile
+        Write-Host "`nStep 2/2: cross fork — build.sh $($CrossArgs -join ' ')`n" -ForegroundColor Cyan
+        & ./build.sh @CrossArgs 2>&1 | Tee-Object -FilePath $LogFile
+    } else {
+        Write-Host "`nStep 2/2: Windows fork — build.cmd $($BuildArgs -join ' ')`n" -ForegroundColor Cyan
+        & .\build.cmd @BuildArgs 2>&1 | Tee-Object -FilePath $LogFile
+    }
 
     $exitCode = $LASTEXITCODE
     if ($exitCode -eq 0) {
@@ -189,7 +246,18 @@ try {
         # lib.exe берёт все .obj из обеих библиотек и пакует в одну self-
         # contained .lib; kernel-side link.exe тащит .obj on-demand как обычно.
         $StaticLib = Join-Path $ObjDir 'dlls/mscoree/coreclr/coreclr_static.lib'
-        if (Test-Path $StaticLib) {
+
+        # Кросс-сборка: слияние не делаем. Ни llvm-lib, ни lld-link /lib не
+        # могут ПЕРЕУПАКОВАТЬ libcmt.lib — внутри есть объекты с машинным типом
+        # 0 (например mbcat.obj, таблицы многобайтных кодировок), lib.exe их
+        # терпит, LLVM отвергает: "unknown machine: 0". При этом как обычную
+        # библиотеку при сшивании lld-link её принимает: члены тянутся по
+        # требованию и до таких объектов дело не доходит. Поэтому libcmt
+        # добавляется прямо в сшивание ядра — см. CrossHostLink.props в SharpOS.
+        if ($UnixHost) {
+            Write-Host "Слияние libcmt пропущено (unix-хост): ядро возьмёт libcmt.lib из sysroot напрямую" -ForegroundColor DarkGray
+        }
+        elseif (Test-Path $StaticLib) {
             $pfx86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
             $vsInstaller = Join-Path $pfx86 'Microsoft Visual Studio\Installer\vswhere.exe'
             if (Test-Path $vsInstaller) {

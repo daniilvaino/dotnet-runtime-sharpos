@@ -32,8 +32,13 @@ endfunction(generate_module_index)
 
 if(NOT DEFINED CLR_CROSS_COMPONENTS_BUILD)
     generate_module_index(coreclr ${CMAKE_CURRENT_BINARY_DIR}/runtimemoduleindex.h)
-    generate_module_index(mscordaccore ${CMAKE_CURRENT_BINARY_DIR}/dacmoduleindex.h)
-    generate_module_index(mscordbi ${CMAKE_CURRENT_BINARY_DIR}/dbimoduleindex.h)
+    # SharpOS cross-host: при сборке с unix-хоста отладочные компоненты не
+    # собираются (см. dlls/CMakeLists.txt), поэтому и указателей на них здесь
+    # быть не может — иначе cmake падает с "No target mscordbi".
+    if(CMAKE_HOST_WIN32 OR NOT CLR_CMAKE_TARGET_SHARPOS)
+        generate_module_index(mscordaccore ${CMAKE_CURRENT_BINARY_DIR}/dacmoduleindex.h)
+        generate_module_index(mscordbi ${CMAKE_CURRENT_BINARY_DIR}/dbimoduleindex.h)
+    endif()
 endif()
 
 # publish runtimeinfo lib

@@ -17,7 +17,13 @@ if (CLR_CMAKE_TARGET_WIN32 OR CLR_CMAKE_TARGET_SHARPOS)
     add_library_clr(cordbee_wks OBJECT ${CORDBEE_SOURCES_WKS} ${ASM_FILE} ${ASM_OBJECTS})
 
   else ()
-    set(ASM_OPTIONS /c /Zi /W3 /errorReport:prompt)
+    # SharpOS cross-host: /W3 и /errorReport — ключи ml64, JWasm их не знает и
+    # читает как имена файлов ("Cannot open file: /W3"). /c и /Zi понимают оба.
+    if (CMAKE_HOST_WIN32)
+      set(ASM_OPTIONS /c /Zi /W3 /errorReport:prompt)
+    else()
+      set(ASM_OPTIONS /c /Zi)
+    endif()
 
     if (CLR_CMAKE_HOST_ARCH_I386)
       list (APPEND ASM_OPTIONS /safeseh)
