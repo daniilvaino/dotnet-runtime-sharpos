@@ -1,4 +1,4 @@
-# build_clr_sharpos.ps1
+﻿# build_clr_sharpos.ps1
 #
 # Build CoreCLR fork с TARGET_SHARPOS configuration.
 # Produces coreclr_sharpos_static.lib + dependencies для Phase 6.1
@@ -60,7 +60,10 @@ $LogFile  = Join-Path $ForkRoot ('build-sharpos-' + $Configuration.ToLower() + '
 # инструментарий: clang-cl + lld-link + llvm-lib + JWasm вместо MSVC, а
 # заголовки и библиотеки MSVC берутся из sysroot'а, который делает xwin.
 # Подробности и почему именно так — в eng/native/sharpos-crosshost.cmake.
-$UnixHost = -not $IsWindows
+# $IsWindows есть только в pwsh 6+; под Windows PowerShell 5.1 её нет, и
+# `-not $null` дало бы $true — скрипт ушёл бы в unix-ветку и упал на поиске
+# clang-cl. $env:OS = 'Windows_NT' на любой Windows и не задан на unix.
+$UnixHost = -not ($IsWindows -or ($env:OS -eq 'Windows_NT'))
 
 if ($UnixHost) {
     # Версия LLVM значима: clang 23 отвергает __try рядом с объектом,
