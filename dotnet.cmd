@@ -7,7 +7,11 @@ if NOT [%ERRORLEVEL%] == [0] (
   exit /b %ERRORLEVEL%
 )
 
-set /p dotnetPath=<%~dp0artifacts\toolset\sdk.txt
+:: SharpOS: let PowerShell read sdk.txt and print the path. 'set /p' from a file
+:: decodes bytes with the OEM code page while sdk.txt is written in ANSI, so a
+:: non-ASCII SDK path (e.g. under a Cyrillic user profile, where mise puts it)
+:: came out garbled. PowerShell's console output uses the same OEM page cmd reads.
+for /f "usebackq delims=" %%p in (`powershell -NoProfile -Command "Get-Content -LiteralPath '%~dp0artifacts\toolset\sdk.txt'"`) do set "dotnetPath=%%p"
 
 :: Clear the 'Platform' env variable for this session, as it's a per-project setting within the build, and
 :: misleading value (such as 'MCD' in HP PCs) may lead to build breakage (issue: #69).
