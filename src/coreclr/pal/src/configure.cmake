@@ -141,6 +141,21 @@ check_function_exists(semget HAS_SYSV_SEMAPHORES)
 check_function_exists(pthread_mutex_init HAS_PTHREAD_MUTEXES)
 check_function_exists(ttrace HAVE_TTRACE)
 check_function_exists(pipe2 HAVE_PIPE2)
+
+# macOS 26: check_function_exists отвечает "да", хотя функции в системе нет.
+# Apple перечислила _pipe2 в tbd-заглушке libSystem из SDK, поэтому линковщик
+# пробу принимает, но dyld её не экспортирует: dlsym(RTLD_DEFAULT, "pipe2")
+# возвращает 0, и unistd.h её не объявляет. Вызов уходит через заглушку импорта
+# на нулевой адрес — PAL падает по SIGSEGV прямо в CreateProcessPipe при
+# инициализации, то есть любой загрузивший его инструмент (у нас crossgen2)
+# умирает молча, ещё до первой строчки полезной работы.
+# На Apple pipe2 нет ни в одной версии, так что признак просто гасим — в PAL
+# рядом лежит равноценный путь pipe() + fcntl(FD_CLOEXEC).
+# (В src/native/libs/configure.cmake ту же функцию проверяют через
+#  check_symbol_exists по unistd.h — эта проверка на macOS отвечает верно.)
+if(APPLE AND HAVE_PIPE2)
+  set(HAVE_PIPE2 0 CACHE INTERNAL "pipe2 в macOS отсутствует, несмотря на заглушку в SDK" FORCE)
+endif()
 check_function_exists(strerrorname_np HAVE_STRERRORNAME_NP)
 
 check_cxx_source_compiles("

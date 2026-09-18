@@ -1,5 +1,24 @@
 include(${CMAKE_CURRENT_LIST_DIR}/functions.cmake)
 
+# SharpOS cross-host: сборка кросс-инструментов идёт ПОД ХОСТ, а не под цель.
+#
+# crossgen2 исполняется на машине сборщика и дёргает JIT через нативную
+# прослойку. Её собирает отдельный заход cmake с CLR_CROSS_COMPONENTS_BUILD, и
+# цель у него — сам хост (здесь osx-arm64), а не SharpOS. Но -DCLR_CMAKE_TARGET_SHARPOS
+# приходит из одной строки -cmakeargs и достаётся обоим заходам.
+#
+# Признак означает "конечная цель — SharpOS" и разведён примерно по тридцати
+# местам: какой PAL брать, какой набор фич, C++17 вместо C++11, заглушки
+# POSIX-заголовков. В сборке под хост каждое из них — неверный ответ, и каждое
+# всплывало отдельной ошибкой: сначала заглушки прятали getpid, потом PAL цели
+# требовал windows.h, потом JIT линковался с несобранным coreclrpal. Гасим
+# признак в одном месте, вместо того чтобы обходить его по одному.
+if(CLR_CROSS_COMPONENTS_BUILD AND CLR_CMAKE_TARGET_SHARPOS)
+    unset(CLR_CMAKE_TARGET_SHARPOS CACHE)
+    unset(CLR_CMAKE_TARGET_SHARPOS)
+    message(STATUS "SharpOS: сборка кросс-инструментов идёт под хост, признак цели снят")
+endif()
+
 # If set, indicates that this is not an officially supported release.
 # Release branches should set this to false.
 set(PRERELEASE 0)

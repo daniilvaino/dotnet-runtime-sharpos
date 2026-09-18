@@ -16,13 +16,9 @@ endif()
 # SharpOS PAL: pal/sharpos/ replaces pal/src/ on TARGET_SHARPOS.
 # Per Phase 2 Redesign + D9 — pal/sharpos/ is a parallel directory, additive
 # only, no modifications to pal/src/. Tests are skipped on TARGET_SHARPOS too.
-# SharpOS cross-host: в сборке кросс-инструментов наш PAL не собирается. Она
-# идёт под хост (macOS, Linux), а pal/sharpos/ написан под цель и включает
-# windows.h, которого на хосте нет. Хостовым инструментам PAL цели не нужен —
-# им нужен только JIT.
-if (CLR_CMAKE_TARGET_SHARPOS AND NOT CLR_CROSS_COMPONENTS_BUILD)
+if (CLR_CMAKE_TARGET_SHARPOS)
     add_subdirectory(sharpos)
-elseif (NOT CLR_CMAKE_TARGET_SHARPOS)
+else()
     add_subdirectory(src)
     add_subdirectory(tests)
 endif()

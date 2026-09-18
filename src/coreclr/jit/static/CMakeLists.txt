@@ -8,12 +8,9 @@ add_library_clr(clrjit_static
     ${JIT_ARCH_SOURCES}
 )
 
-# SharpOS cross-host: см. utilcode/CMakeLists.txt — PAL цели под хост не строится.
-if(CLR_CMAKE_HOST_UNIX AND NOT CLR_CROSS_COMPONENTS_BUILD)
+if(CLR_CMAKE_HOST_UNIX)
     add_dependencies(clrjit_static coreclrpal gcinfo)
-elseif(CLR_CROSS_COMPONENTS_BUILD)
-    add_dependencies(clrjit_static gcinfo)
-endif()
+endif(CLR_CMAKE_HOST_UNIX)
 
 target_include_directories(clrjit_static PRIVATE ${JIT_SOURCE_DIR})
 target_precompile_headers(clrjit_static PRIVATE [["jitpch.h"]])

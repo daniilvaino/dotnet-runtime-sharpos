@@ -1,5 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <!--
+      Строка повторяет crossgen2.csproj: без неё ILCompiler.props считает, что
+      хост совпадает с целью, и ищет прослойку JIT по имени цели в корне
+      (libjitinterface_x64.dylib), тогда как кросс-сборка кладёт хостовую в
+      подкаталог по имени хоста. У близнеца crossgen2 эта строка есть, здесь её
+      нет — на Windows-хосте разницы не видно, потому что хост и есть цель.
+    -->
+    <CrossHostArch Condition="'$(CrossBuild)' == 'true' or '$(TargetArchitecture)' != '$(BuildArchitecture)' or '$(HostOS)' != '$(TargetOS)' or '$(EnableNativeSanitizers)' != ''">$(BuildArchitecture)</CrossHostArch>
     <OutputPath>$(RuntimeBinDir)ilc/</OutputPath>
   </PropertyGroup>
 

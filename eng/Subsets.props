@@ -477,8 +477,18 @@
     <ProjectToBuild Include="$(CoreClrProjectRoot)nativeaot\BuildIntegration\BuildIntegration.proj" Category="clr" Condition="'$(SdkToolsSupported)' == 'true' or '$(NativeAotSupported)' == 'true'" />
     <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler.Build.Tasks\ILCompiler.Build.Tasks.csproj" Category="clr" Condition="'$(SdkToolsSupported)' == 'true' or '$(NativeAotSupported)' == 'true'" />
 
-    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler\ILCompiler_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true'" Category="clr" />
-    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\crossgen2\crossgen2_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true'" Category="clr" />
+    <!--
+      SharpOS: эти два проекта публикуют САМОДОСТАТОЧНЫЕ копии ILC и crossgen2 под
+      целевой RID, чтобы их можно было запускать на самой цели. SharpOS их не
+      запускает: и AOT ядра, и crossgen библиотеки делаются на машине сборки
+      вариантами _inbuild, которые строятся всегда (см. выше). Собраться под
+      кросс-хостом они и не могут: RID у них целевой (win-x64), а флаги имён
+      разделяемых библиотек берутся хостовые — на macOS выходит требование
+      несуществующего libjitinterface_x64.dylib.
+      Тем же признаком уже отключён clr.packages (см. ниже).
+    -->
+    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler\ILCompiler_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true' and '$(SharpOSBuild)' != 'true'" Category="clr" />
+    <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\crossgen2\crossgen2_publish.csproj" Condition="'$(SdkToolsSupported)' == 'true' and '$(SharpOSBuild)' != 'true'" Category="clr" />
 
 
     <ProjectToBuild Include="$(CoreClrProjectRoot)tools\aot\ILCompiler\ILCompiler.csproj" Condition="'$(SdkToolsSupported)' == 'true'" Category="clr" />
