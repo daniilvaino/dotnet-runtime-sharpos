@@ -2,7 +2,7 @@
 ; The .NET Foundation licenses this file to you under the MIT license.
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 EXTERN RhpNewObject : PROC
 EXTERN RhpNewVariableSizeObject : PROC

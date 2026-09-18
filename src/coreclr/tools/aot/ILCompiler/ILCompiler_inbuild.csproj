@@ -10,7 +10,12 @@
       Publish with AOT on Windows as Single file doesn't work well when an app has to include DiaSymReader.Native.
       Publish single-file elsewhere so we don't need to adjust our "AOT in build" logic to handle targeting the SDK RID.
     -->
-    <PublishAot Condition="$(NETCoreSdkPortableRuntimeIdentifier.StartsWith('win-'))">true</PublishAot>
+    <!--
+      SharpOS: single-file на любом хосте, как на unix. NativeAOT-публикация на
+      Windows сшивает MSVC link.exe из Visual Studio, а сборка форка идёт без неё
+      (eng/native/sharpos-toolchain.cmake) — и одним путём на всех хостах.
+    -->
+    <PublishAot Condition="$(NETCoreSdkPortableRuntimeIdentifier.StartsWith('win-')) and '$(SharpOSBuild)' != 'true'">true</PublishAot>
     <PublishSingleFile Condition="'$(PublishAot)' != 'true'">true</PublishSingleFile>
     <TrimmerSingleWarn>false</TrimmerSingleWarn>
   </PropertyGroup>

@@ -9,13 +9,11 @@ set( CORGUIDS_IDL_SOURCES
   sospriv.idl
 )
 
-# SharpOS cross-host: условие смотрит на НАСТОЯЩИЙ хост, а не на цель.
-# CLR_CMAKE_HOST_WIN32 при кросс-сборке описывает цель (Windows ABI), и по нему
-# мы уходили бы в ветку midl.exe — а это виндовый исполняемый файл, которого на
-# macOS и Linux нет и замены в LLVM тоже (сборка падала с Error 127). Ветка ниже
-# ровно для этого случая и написана: в дереве лежат заранее сгенерированные
-# pal/prebuilt/idl/*_i.cpp, ими и пользуемся.
-if(CLR_CMAKE_HOST_WIN32 AND CMAKE_HOST_WIN32)
+# SharpOS toolchain: midl.exe есть только в Windows SDK для Windows, в splat
+# от xwin и в LLVM его нет (на unix-хосте сборка падала с Error 127). Ветка
+# ниже ровно для этого случая и написана: в дереве лежат заранее
+# сгенерированные pal/prebuilt/idl/*_i.cpp, ими и пользуемся — на любом хосте.
+if(CLR_CMAKE_HOST_WIN32 AND NOT CLR_CMAKE_SHARPOS_TOOLCHAIN)
     #Build for corguids is done in two steps:
     #1. compile .idl to *_i.c : This is done using custom midl command
     #2. compile *_i.c to .lib

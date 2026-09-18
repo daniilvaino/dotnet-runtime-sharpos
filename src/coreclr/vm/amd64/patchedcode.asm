@@ -10,7 +10,7 @@
 
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 ifdef _DEBUG
 extern JIT_WriteBarrier_Debug:proc

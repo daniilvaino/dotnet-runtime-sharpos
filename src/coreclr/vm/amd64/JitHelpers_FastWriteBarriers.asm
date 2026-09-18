@@ -11,7 +11,7 @@
 ; ***********************************************************************
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 
 ; Two super fast helpers that together do the work of JIT_WriteBarrier.  These

@@ -4,7 +4,7 @@
 ifdef FEATURE_COMINTEROP
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 ; extern "C" const BYTE* ComPreStubWorker(ComPrestubMethodFrame *pPFrame, UINT64 *pErrorResult)
 extern ComPreStubWorker:proc

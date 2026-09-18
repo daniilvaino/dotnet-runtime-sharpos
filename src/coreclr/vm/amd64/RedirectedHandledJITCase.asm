@@ -7,7 +7,7 @@
 ; The .NET Foundation licenses this file to you under the MIT license.
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 Thread__GetAbortContext equ ?GetAbortContext@Thread@@QEAAPEAU_CONTEXT@@XZ
 

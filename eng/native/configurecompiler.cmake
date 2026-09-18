@@ -118,8 +118,8 @@ if (MSVC)
   # Same for _tls_index / __dyn_tls_* (any TLS usage).
   if (CLR_CMAKE_TARGET_SHARPOS)
     # Язык указан явно: /GS- это флаг кодогенерации C/C++, ассемблеру он
-    # бессмысленен. Без ограничения он попадает и в ASM_MASM, и llvm-ml
-    # читает его как имя файла ("/GS-: No such file or directory").
+    # бессмысленен. Без ограничения он попадает и в ASM_MASM, и JWasm
+    # читает его как имя файла.
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/GS->)
     add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/Zc:threadSafeInit->)
     add_link_options(/GUARD:NO)
@@ -1023,8 +1023,9 @@ if (MSVC)
   # Set Warning Level 4:
   add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/w44177>) # Pragma data_seg s/b at global scope.
 
-  # SharpOS cross-host: ассемблеру ключ идёт через дефис (см. /nologo выше).
-  if (CMAKE_HOST_WIN32)
+  # SharpOS toolchain (eng/native/sharpos-toolchain.cmake, на любом хосте):
+  # ассемблер — JWasm, ему ключ идёт через дефис (см. /nologo ниже).
+  if (NOT CLR_CMAKE_SHARPOS_TOOLCHAIN)
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX,ASM_MASM>:/Zi>) # enable debugging information
   else()
     add_compile_options($<$<COMPILE_LANGUAGE:C,CXX>:/Zi>)
@@ -1064,12 +1065,11 @@ if (MSVC)
   if (CLR_CMAKE_HOST_ARCH_AMD64 AND NOT CLR_CMAKE_RUNTIME_MONO)
     set_property(GLOBAL PROPERTY CLR_EH_CONTINUATION ON)
 
-    # SharpOS cross-host: ml64 понимает /guard:ehcont, llvm-ml — нет
-    # ("/guard:ehcont: No such file or directory"). На unix-хосте убираем его
-    # из ассемблерных исходников. Потеря не принципиальна: метаданные
-    # EH-continuation работают вместе с Control Flow Guard, а на TARGET_SHARPOS
-    # CFG выключен (/guard:cf- и /GUARD:NO выше по файлу).
-    if (CMAKE_HOST_WIN32)
+    # SharpOS toolchain: ml64 понимает /guard:ehcont, JWasm — нет (читает его
+    # как имя файла). Из ассемблерных исходников убираем. Потеря не
+    # принципиальна: метаданные EH-continuation работают вместе с Control Flow
+    # Guard, а на TARGET_SHARPOS CFG выключен (/guard:cf- и /GUARD:NO выше).
+    if (NOT CLR_CMAKE_SHARPOS_TOOLCHAIN)
       add_compile_options($<$<AND:$<COMPILE_LANGUAGE:C,CXX,ASM_MASM>,$<BOOL:$<TARGET_PROPERTY:CLR_EH_CONTINUATION>>>:/guard:ehcont>)
     else()
       add_compile_options($<$<AND:$<COMPILE_LANGUAGE:C,CXX>,$<BOOL:$<TARGET_PROPERTY:CLR_EH_CONTINUATION>>>:/guard:ehcont>)
@@ -1095,10 +1095,10 @@ if (MSVC)
     add_linker_flag(/DEFAULTLIB:ucrt.lib RELEASE)
   endif()
 
-  # SharpOS cross-host: /ZH:SHA_256 (хеш для контрольных сумм отладочной
-  # информации) llvm-ml не поддерживает. На unix-хосте пропускаем — влияет
-  # только на формат записи в отладочных данных.
-  if (CMAKE_HOST_WIN32)
+  # SharpOS toolchain: /ZH:SHA_256 (хеш для контрольных сумм отладочной
+  # информации) JWasm не поддерживает. Влияет только на формат записи в
+  # отладочных данных.
+  if (NOT CLR_CMAKE_SHARPOS_TOOLCHAIN)
     add_compile_options($<$<COMPILE_LANGUAGE:ASM_MASM>:/ZH:SHA_256>)
   endif()
 
@@ -1110,24 +1110,17 @@ if (MSVC)
   # Don't display the output header when building RC files.
   set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} /nologo")
   # Don't display the output header when building asm files.
-  # SharpOS cross-host: у JWasm на unix ключи задаются через дефис. Аргумент
-  # вида /nologo он принимает за путь к файлу и падает с "Cannot open file",
-  # при этом сам исходник собирает — из-за чего сборка выглядит успешной, а
-  # код возврата ненулевой.
-  if (CMAKE_HOST_WIN32)
+  # SharpOS toolchain: ключи JWasm задаются через дефис. На unix-хосте
+  # аргумент вида /nologo он принимает за путь к файлу и падает с "Cannot open
+  # file", при этом сам исходник собирает — сборка выглядит успешной, а код
+  # возврата ненулевой. Дефис он понимает на любом хосте.
+  # -win64: JWasm, в отличие от ml64, по умолчанию собирает 32-битный код.
+  # Задавать ключи через CMAKE_ASM_MASM_FLAGS_INIT в тулчейне бесполезно:
+  # строка ниже пересобирает переменную и значение теряется.
+  if (NOT CLR_CMAKE_SHARPOS_TOOLCHAIN)
     set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} /nologo")
   else()
-    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} -nologo")
-  endif()
-  # SharpOS cross-host: llvm-ml, в отличие от ml64, по умолчанию собирает
-  # 32-битный код — отсюда "register %r12 is only available in 64-bit mode" и
-  # ".seh_* directives are not supported on this target". Задавать через
-  # CMAKE_ASM_MASM_FLAGS_INIT в тулчейне бесполезно: строка выше пересобирает
-  # переменную и значение теряется.
-  if (NOT CMAKE_HOST_WIN32 AND CLR_CMAKE_TARGET_ARCH_AMD64)
-    # Ключ задаёт тулчейн: JWasm понимает -win64, llvm-ml -m64. Оба по
-    # умолчанию собирают 32-битный код, в отличие от ml64.
-    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} ${SHARPOS_ASM_MASM_TARGET_FLAG}")
+    set(CMAKE_ASM_MASM_FLAGS "${CMAKE_ASM_MASM_FLAGS} -nologo -win64")
   endif()
 endif (MSVC)
 
@@ -1183,12 +1176,12 @@ if (CLR_CMAKE_HOST_WIN32)
       set(CMAKE_ASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreadedDebugDLL "")
       set(CMAKE_ASM_COMPILE_OBJECT "<CMAKE_ASM_COMPILER> -g <INCLUDES> <FLAGS> -o <OBJECT> <SOURCE>")
     else()
-      # SharpOS cross-host: на unix-хосте ml64 не существует; ассемблер задаёт
-      # тулчейн (eng/native/sharpos-crosshost.cmake) как llvm-ml. Цель — Windows
-      # ABI, поэтому берутся именно MASM-исходники vm/amd64/*.asm, а не соседние
-      # .S: те под SysV ABI и DWARF.
-      if (NOT CMAKE_HOST_WIN32 AND NOT CMAKE_ASM_MASM_COMPILER)
-        message(FATAL_ERROR "CMAKE_ASM_MASM_COMPILER не задан: при сборке с unix-хоста нужен llvm-ml (передаётся тулчейном sharpos-crosshost.cmake)")
+      # SharpOS toolchain: ассемблер — JWasm, его задаёт тулчейн
+      # (eng/native/sharpos-toolchain.cmake). Цель — Windows ABI, поэтому
+      # берутся именно MASM-исходники vm/amd64/*.asm, а не соседние .S: те под
+      # SysV ABI и DWARF.
+      if (CLR_CMAKE_SHARPOS_TOOLCHAIN AND NOT CMAKE_ASM_MASM_COMPILER)
+        message(FATAL_ERROR "CMAKE_ASM_MASM_COMPILER не задан: его передаёт тулчейн sharpos-toolchain.cmake (JWasm)")
       endif()
       enable_language(ASM_MASM)
       set(CMAKE_ASM_MASM_COMPILE_OPTIONS_MSVC_RUNTIME_LIBRARY_MultiThreaded         "")
@@ -1199,18 +1192,15 @@ if (CLR_CMAKE_HOST_WIN32)
 
     # Ensure that MC is present.
     #
-    # SharpOS cross-host: CMAKE_HOST_WIN32 — это НАСТОЯЩИЙ хост, в отличие от
-    # WIN32/CLR_CMAKE_HOST_WIN32, которые при кросс-сборке описывают цель. При
-    # сборке с macOS или Linux Windows Message Compiler недоступен, замены ему
-    # в LLVM нет, а нужен он только ETW-провайдеру — на TARGET_SHARPOS тот
-    # отключён (см. vm/eventing/CMakeLists.txt). Поэтому проверку пропускаем.
-    if (CMAKE_HOST_WIN32)
+    # SharpOS toolchain: Windows Message Compiler есть только в Windows SDK
+    # для Windows, в splat от xwin и в LLVM его нет. Нужен он только
+    # ETW-провайдеру, а на TARGET_SHARPOS тот отключён (см.
+    # vm/eventing/CMakeLists.txt). Поэтому проверку пропускаем.
+    if (NOT CLR_CMAKE_SHARPOS_TOOLCHAIN)
         find_program(MC mc)
         if (MC STREQUAL "MC-NOTFOUND")
             message(FATAL_ERROR "MC not found")
         endif()
-    elseif (NOT CLR_CMAKE_TARGET_SHARPOS)
-        message(FATAL_ERROR "MC not found: кросс-сборка под Windows с unix-хоста поддержана только для TARGET_SHARPOS")
     endif()
 
 elseif (NOT CLR_CMAKE_HOST_BROWSER AND NOT CLR_CMAKE_HOST_WASI)

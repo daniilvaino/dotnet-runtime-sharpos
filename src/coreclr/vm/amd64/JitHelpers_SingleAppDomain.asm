@@ -6,7 +6,7 @@
 ; ***********************************************************************
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 ; Min amount of stack space that a nested function should allocate.
 MIN_SIZE equ 28h

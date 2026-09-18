@@ -21,7 +21,11 @@
     <BuildDll Condition="'$(TargetOS)' == 'netbsd' or '$(TargetOS)' == 'illumos' or '$(TargetOS)' == 'solaris' or '$(TargetOS)' == 'haiku'">false</BuildDll>
 
     <BuildPdb>false</BuildPdb>
-    <BuildPdb Condition="$(BuildDll) and '$(OS)' == 'Windows_NT' and '$(TargetOS)' == 'windows'">true</BuildPdb>
+    <!-- SharpOS: символов R2R-кода CoreLib (.ni.pdb) нет на любом хосте, как на unix:
+         их пишет DiaSymReader.Native, а он есть только у NativeAOT-crossgen2 на
+         Windows. Сборка SharpOS публикует crossgen2 single-file на всех хостах
+         (crossgen2_inbuild.csproj), и .ni.pdb никто в SharpOS не читает. -->
+    <BuildPdb Condition="$(BuildDll) and '$(OS)' == 'Windows_NT' and '$(TargetOS)' == 'windows' and '$(SharpOSBuild)' != 'true'">true</BuildPdb>
 
     <BuildPerfMap>false</BuildPerfMap>
     <BuildPerfMap Condition="$(BuildDll) and '$(TargetOS)' == 'linux'">true</BuildPerfMap>

@@ -54,7 +54,9 @@ if(CLR_CMAKE_HOST_WIN32)
 
     if (CLR_CMAKE_TARGET_ARCH_AMD64 OR ((CLR_CMAKE_TARGET_ARCH_ARM64 OR CLR_CMAKE_TARGET_ARCH_ARM)
         AND NOT DEFINED CLR_CROSS_COMPONENTS_BUILD))
-        set(CORDBDI_SOURCES_ASM_FILE ${ARCH_SOURCES_DIR}/FloatConversion.asm) # имя как на диске: на case-sensitive ФС иначе не находится
+        # SharpOS: имя — с тем же регистром, что у файла в дереве. На
+        # Windows и macOS разницы нет, на Linux-хосте иначе "Cannot find source file".
+        set(CORDBDI_SOURCES_ASM_FILE ${ARCH_SOURCES_DIR}/FloatConversion.asm)
     endif()
 
     if ((CLR_CMAKE_TARGET_ARCH_ARM OR CLR_CMAKE_TARGET_ARCH_ARM64) AND NOT DEFINED CLR_CROSS_COMPONENTS_BUILD)

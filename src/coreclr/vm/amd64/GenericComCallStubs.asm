@@ -4,7 +4,7 @@
 ifdef FEATURE_COMINTEROP
 
 include AsmMacros.inc
-include asmconstants.inc
+include AsmConstants.inc
 
 extern CallDescrWorkerUnwindFrameChainHandler:proc
 extern ReverseComUnwindFrameChainHandler:proc
